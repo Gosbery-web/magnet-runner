@@ -33,11 +33,58 @@
       box-shadow: 0 18px 55px rgba(0,0,0,.45);
       touch-action: manipulation;
     }
+    
+    /* Экран разблокировки аудио */
+    .audio-unlock-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      color: white;
+      text-align: center;
+      padding: 20px;
+      font-size: 18px;
+      flex-direction: column;
+    }
+    
+    .unlock-button {
+      background: #c81f2a;
+      color: white;
+      border: none;
+      padding: 15px 30px;
+      font-size: 20px;
+      border-radius: 10px;
+      margin-top: 20px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    
+    .unlock-button:hover {
+      background: #d93641;
+    }
+    
+    .unlock-button:active {
+      transform: scale(0.98);
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <canvas id="c"></canvas>
+    <div id="audioUnlockOverlay" class="audio-unlock-overlay">
+      <div>
+        <p style="font-size: 22px; margin-bottom: 10px;">🎵 ВКЛЮЧИТЬ ЗВУК 🎵</p>
+        <p style="font-size: 16px; margin-bottom: 20px; opacity: 0.9;">Для полного погружения в игру</p>
+        <button id="unlockButton" class="unlock-button">ВКЛЮЧИТЬ ЗВУК</button>
+        <p style="font-size: 14px; margin-top: 20px; opacity: 0.7;">Или нажмите в любом месте экрана</p>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -62,7 +109,7 @@
   const ASSET_JUMP  = 'jump.wav';
   const ASSET_HIT   = 'hit.wav';
 
-  // ================= УЛУЧШЕННАЯ СИСТЕМА АУДИО =================
+  // ================= СИСТЕМА АУДИО С ЯВНОЙ РАЗБЛОКИРОВКОЙ =================
   let audioUnlocked = false;
   let musicPlaying = false;
   
@@ -83,31 +130,51 @@
   sfxHit.volume = 0.65;
   sfxHit.preload = 'auto';
 
-  // Функция разблокировки аудио
+  // Элементы для разблокировки
+  const audioUnlockOverlay = document.getElementById('audioUnlockOverlay');
+  const unlockButton = document.getElementById('unlockButton');
+
+  // Функция разблокировки аудио с явным взаимодействием
   function unlockAudio() {
     if (audioUnlocked) return;
     
-    console.log('Попытка разблокировки аудио...');
+    console.log('Явная разблокировка аудио...');
     
     // Создаем временный аудио элемент для разблокировки
     const unlockSound = new Audio();
-    unlockSound.src = ASSET_JUMP; // Используем короткий звук для разблокировки
-    unlockSound.volume = 0.01; // Почти неслышно
+    unlockSound.src = ASSET_JUMP;
+    unlockSound.volume = 0.5;
     
     // Пытаемся воспроизвести звук
     unlockSound.play().then(() => {
-      console.log('Аудио разблокировано!');
+      console.log('Аудио успешно разблокировано!');
       audioUnlocked = true;
       
-      // Останавливаем разблокировочный звук
-      unlockSound.pause();
-      unlockSound.currentTime = 0;
+      // Скрываем оверлей разблокировки
+      audioUnlockOverlay.style.display = 'none';
       
-      // "Разогреваем" основные звуки
+      // Запускаем музыку, если мы в игре
+      if (scene === Scene.PLAY) {
+        startMusic();
+      }
+      
+      // "Разогреваем" звуковые эффекты
       warmupAudio();
       
     }).catch(error => {
-      console.log('Не удалось разблокировать аудио:', error);
+      console.log('Ошибка разблокировки аудио:', error);
+      
+      // Показываем сообщение об ошибке
+      audioUnlockOverlay.innerHTML = `
+        <div style="text-align: center;">
+          <p style="font-size: 22px; margin-bottom: 10px;">⚠️ ОШИБКА ЗВУКА ⚠️</p>
+          <p style="font-size: 16px; margin-bottom: 20px; opacity: 0.9;">
+            Пожалуйста, разрешите воспроизведение звука<br>
+            в настройках вашего браузера
+          </p>
+          <button onclick="location.reload()" class="unlock-button">ПОПРОБОВАТЬ СНОВА</button>
+        </div>
+      `;
     });
   }
 
@@ -302,10 +369,16 @@
   }
 
   function startGame(){
+    // Если аудио не разблокировано, показываем оверлей
+    if (!audioUnlocked) {
+      audioUnlockOverlay.style.display = 'flex';
+      return;
+    }
+    
     resetRun();
     scene = Scene.PLAY;
     
-    // Пытаемся запустить музыку при старте игры
+    // Запускаем музыку
     setTimeout(() => {
       startMusic();
     }, 100);
@@ -435,18 +508,23 @@
   }
 
   // ================= INPUT =================
-  // Глобальный обработчик для разблокировки аудио
-  function globalUnlockHandler() {
-    console.log('Пользовательское взаимодействие обнаружено');
-    unlockAudio();
-  }
+  // Обработчики для разблокировки аудио
+  unlockButton.addEventListener('click', unlockAudio);
   
-  // Добавляем обработчики для разблокировки аудио
-  document.addEventListener('click', globalUnlockHandler, { once: true });
-  document.addEventListener('touchstart', globalUnlockHandler, { once: true });
-  document.addEventListener('keydown', globalUnlockHandler, { once: true });
+  // Также разблокируем по клику в любом месте оверлея
+  audioUnlockOverlay.addEventListener('click', (e) => {
+    if (e.target === audioUnlockOverlay || e.target === unlockButton) {
+      unlockAudio();
+    }
+  });
 
   canvas.addEventListener('pointerdown', (e) => {
+    // Если аудио не разблокировано, показываем оверлей
+    if (!audioUnlocked) {
+      audioUnlockOverlay.style.display = 'flex';
+      return;
+    }
+    
     const p = toCanvasCoords(e.clientX, e.clientY);
 
     if (scene === Scene.PLAY) { jump(); return; }
@@ -469,6 +547,12 @@
   });
 
   window.addEventListener('keydown', (e) => {
+    // Если аудио не разблокировано, показываем оверлей
+    if (!audioUnlocked) {
+      audioUnlockOverlay.style.display = 'flex';
+      return;
+    }
+    
     if (e.code === 'Space' || e.code === 'ArrowUp') { 
       e.preventDefault(); 
       if (scene === Scene.PLAY) jump();
@@ -800,18 +884,4 @@
     };
   }
   
-  // Автоматически пытаемся разблокировать аудио при загрузке
-  window.addEventListener('load', () => {
-    console.log('Страница загружена, пытаемся разблокировать аудио...');
-    
-    // Даем небольшой таймаут для загрузки ресурсов
-    setTimeout(() => {
-      unlockAudio();
-    }, 1000);
-  });
-  
-  requestAnimationFrame(tick);
-})();
-</script>
-</body>
-</html>
+  // Проверяем
