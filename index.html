@@ -62,64 +62,141 @@
   const ASSET_JUMP  = 'jump.wav';
   const ASSET_HIT   = 'hit.wav';
 
-  // ================= АУДИО И РАЗБЛОКИРОВКА =================
-  const music = new Audio(ASSET_MUSIC); 
-  music.loop = true; 
-  music.volume = 0.30;
-  music.preload = 'auto'; // Предзагрузка
+  // ================= УЛУЧШЕННАЯ СИСТЕМА АУДИО =================
+  let audioContext = null;
+  let audioUnlocked = false;
+  let musicSource = null;
+  let musicBuffer = null;
+  let jumpBuffer = null;
+  let hitBuffer = null;
   
-  const sfxJump = new Audio(ASSET_JUMP); 
-  sfxJump.volume = 0.45;
-  sfxJump.preload = 'auto';
-  
-  const sfxHit  = new Audio(ASSET_HIT);  
-  sfxHit.volume  = 0.65;
-  sfxHit.preload = 'auto';
+  // Буферы для звуков
+  const audioBuffers = {
+    music: null,
+    jump: null,
+    hit: null
+  };
 
-  let audioUnlocked = false; // Флаг разблокировки аудио
+  // Загрузка аудио файлов
+  async function loadAudio(url, name) {
+    try {
+      const response = await fetch(url);
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      audioBuffers[name] = audioBuffer;
+      return true;
+    } catch (error) {
+      console.error(`Error loading audio ${name}:`, error);
+      return false;
+    }
+  }
 
-  function unlockAudio(){
-    if (audioUnlocked) return;
+  // Инициализация аудио
+  async function initAudio() {
+    if (audioContext) return;
+    
+    // Создаем AudioContext
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // Ждем пока пользователь взаимодействует
+    await audioContext.resume();
+    
+    // Загружаем все аудио файлы
+    await Promise.all([
+      loadAudio(ASSET_MUSIC, 'music'),
+      loadAudio(ASSET_JUMP, 'jump'),
+      loadAudio(ASSET_HIT, 'hit')
+    ]);
+    
     audioUnlocked = true;
-
-    // Разблокируем все аудио элементы
-    music.currentTime = 0;
-    music.play().catch(e => console.log('Music play error:', e));
-    
-    // Также "разогреваем" звуковые эффекты
-    sfxJump.currentTime = 0;
-    sfxJump.volume = 0;
-    sfxJump.play().then(() => {
-      sfxJump.pause();
-      sfxJump.currentTime = 0;
-      sfxJump.volume = 0.45;
-    }).catch(() => {});
-    
-    sfxHit.currentTime = 0;
-    sfxHit.volume = 0;
-    sfxHit.play().then(() => {
-      sfxHit.pause();
-      sfxHit.currentTime = 0;
-      sfxHit.volume = 0.65;
-    }).catch(() => {});
+    console.log('Audio system ready');
   }
 
-  function playSfx(a){ 
-    if (!audioUnlocked) return; // Не проигрываем звуки до разблокировки
+  // Разблокировка аудио при первом взаимодействии
+  function unlockAudio() {
+    if (audioUnlocked) return;
     
-    try { 
-      a.currentTime = 0; 
-      a.play().catch(()=>{}); 
-    } catch {} 
+    // Показываем пользователю, что нужно взаимодействие
+    document.body.style.cursor = 'pointer';
+    
+    // Разблокируем при первом клике
+    const unlockHandler = async () => {
+      document.body.removeEventListener('click', unlockHandler);
+      document.body.removeEventListener('touchstart', unlockHandler);
+      document.body.style.cursor = '';
+      
+      await initAudio();
+      startMusic();
+    };
+    
+    document.body.addEventListener('click', unlockHandler, { once: true });
+    document.body.addEventListener('touchstart', unlockHandler, { once: true });
   }
-  
-  function musicPlay(){ 
-    if (!audioUnlocked) return; // Не включаем музыку до разблокировки
-    if (music.paused) music.play().catch(()=>{}); 
+
+  // Воспроизведение музыки
+  function startMusic() {
+    if (!audioUnlocked || !audioBuffers.music) return;
+    
+    try {
+      if (musicSource) {
+        musicSource.stop();
+      }
+      
+      musicSource = audioContext.createBufferSource();
+      musicSource.buffer = audioBuffers.music;
+      musicSource.loop = true;
+      
+      const gainNode = audioContext.createGain();
+      gainNode.gain.value = 0.30;
+      
+      musicSource.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      musicSource.start();
+    } catch (error) {
+      console.error('Error playing music:', error);
+    }
   }
-  
-  function musicStop(){ 
-    try { music.pause(); } catch {} 
+
+  function stopMusic() {
+    if (musicSource) {
+      try {
+        musicSource.stop();
+        musicSource = null;
+      } catch (error) {
+        console.error('Error stopping music:', error);
+      }
+    }
+  }
+
+  // Воспроизведение звуковых эффектов
+  function playSfx(name, volume = 1.0) {
+    if (!audioUnlocked || !audioBuffers[name]) return;
+    
+    try {
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffers[name];
+      
+      const gainNode = audioContext.createGain();
+      
+      // Устанавливаем громкость для разных эффектов
+      if (name === 'jump') gainNode.gain.value = 0.45 * volume;
+      else if (name === 'hit') gainNode.gain.value = 0.65 * volume;
+      else gainNode.gain.value = volume;
+      
+      source.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      source.start();
+      
+      // Очистка после завершения
+      source.onended = () => {
+        source.disconnect();
+        gainNode.disconnect();
+      };
+    } catch (error) {
+      console.error(`Error playing ${name}:`, error);
+    }
   }
 
   // ================= IMAGES =================
@@ -237,22 +314,27 @@
   function startGame(){
     resetRun();
     scene = Scene.PLAY;
-    music.currentTime = 0;
-    musicPlay();
+    if (audioUnlocked) {
+      startMusic();
+    }
   }
 
   function goMenu(){
     scene = Scene.MENU;
     resetRun();
-    musicStop();
+    stopMusic();
   }
 
   function die(){
     frozenScore = Math.floor(score);
     best = Math.max(best, frozenScore);
     localStorage.setItem('magnet_runner_best', String(best));
-    playSfx(sfxHit);
-    musicStop();
+    
+    if (audioUnlocked) {
+      playSfx('hit');
+      stopMusic();
+    }
+    
     scene = Scene.GAMEOVER;
     player.vy = 0;
     player.onGround = true;
@@ -266,7 +348,10 @@
       player.onGround = false;
       isJumping = true;
       jumpStartTime = performance.now();
-      playSfx(sfxJump);
+      
+      if (audioUnlocked) {
+        playSfx('jump');
+      }
     }
   }
 
@@ -363,8 +448,12 @@
 
   // ================= INPUT =================
   canvas.addEventListener('pointerdown', (e) => {
-    // РАЗБЛОКИРОВКА АУДИО ПРИ ПЕРВОМ ТАПЕ
-    unlockAudio();
+    // Разблокировка аудио при первом касании
+    if (!audioUnlocked) {
+      unlockAudio();
+      e.preventDefault();
+      return;
+    }
     
     const p = toCanvasCoords(e.clientX, e.clientY);
 
@@ -388,8 +477,10 @@
   });
 
   window.addEventListener('keydown', (e) => {
-    // РАЗБЛОКИРОВКА АУДИО ПРИ ПЕРВОМ НАЖАТИИ КЛАВИШИ
-    unlockAudio();
+    // Разблокировка аудио при первом нажатии клавиши
+    if (!audioUnlocked) {
+      unlockAudio();
+    }
     
     if (e.code === 'Space' || e.code === 'ArrowUp') { 
       e.preventDefault(); 
@@ -722,6 +813,8 @@
     };
   }
   
+  // Запускаем игру и инициализируем аудио систему
+  unlockAudio();
   requestAnimationFrame(tick);
 })();
 </script>
