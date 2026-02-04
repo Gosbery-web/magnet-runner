@@ -62,8 +62,9 @@
   const ASSET_JUMP  = 'jump.wav';
   const ASSET_HIT   = 'hit.wav';
 
-  // ================= ПРОСТАЯ СИСТЕМА АУДИО =================
+  // ================= УЛУЧШЕННАЯ СИСТЕМА АУДИО =================
   let audioUnlocked = false;
+  let musicPlaying = false;
   
   // Создаем аудио элементы
   const music = new Audio();
@@ -85,21 +86,37 @@
   // Функция разблокировки аудио
   function unlockAudio() {
     if (audioUnlocked) return;
-    audioUnlocked = true;
     
-    console.log('Audio unlocked');
+    console.log('Попытка разблокировки аудио...');
     
-    // Пробуем запустить и сразу остановить музыку чтобы "разогреть" аудио
-    try {
-      music.currentTime = 0;
-      music.play().then(() => {
-        music.pause();
-        music.currentTime = 0;
-      }).catch(e => {
-        console.log('Music warmup failed:', e);
-      });
+    // Создаем временный аудио элемент для разблокировки
+    const unlockSound = new Audio();
+    unlockSound.src = ASSET_JUMP; // Используем короткий звук для разблокировки
+    unlockSound.volume = 0.01; // Почти неслышно
+    
+    // Пытаемся воспроизвести звук
+    unlockSound.play().then(() => {
+      console.log('Аудио разблокировано!');
+      audioUnlocked = true;
       
-      // Также "разогреваем" звуковые эффекты
+      // Останавливаем разблокировочный звук
+      unlockSound.pause();
+      unlockSound.currentTime = 0;
+      
+      // "Разогреваем" основные звуки
+      warmupAudio();
+      
+    }).catch(error => {
+      console.log('Не удалось разблокировать аудио:', error);
+    });
+  }
+
+  // "Разогрев" аудио элементов
+  function warmupAudio() {
+    if (!audioUnlocked) return;
+    
+    try {
+      // "Разогреваем" звуковые эффекты
       sfxJump.currentTime = 0;
       sfxJump.play().then(() => {
         sfxJump.pause();
@@ -111,29 +128,40 @@
         sfxHit.pause();
         sfxHit.currentTime = 0;
       }).catch(() => {});
+      
     } catch (error) {
-      console.log('Audio unlock error:', error);
+      console.log('Warmup error:', error);
     }
   }
 
   // Воспроизведение музыки
   function startMusic() {
-    if (!audioUnlocked) return;
+    if (!audioUnlocked || musicPlaying) return;
+    
+    console.log('Запуск музыки...');
     
     try {
       music.currentTime = 0;
-      music.play().catch(e => {
-        console.log('Music play error:', e);
+      music.play().then(() => {
+        console.log('Музыка запущена успешно');
+        musicPlaying = true;
+      }).catch(error => {
+        console.log('Ошибка запуска музыки:', error);
+        musicPlaying = false;
       });
     } catch (error) {
       console.log('Start music error:', error);
+      musicPlaying = false;
     }
   }
 
   function stopMusic() {
+    if (!musicPlaying) return;
+    
     try {
       music.pause();
       music.currentTime = 0;
+      musicPlaying = false;
     } catch (error) {
       console.log('Stop music error:', error);
     }
@@ -144,10 +172,18 @@
     if (!audioUnlocked) return;
     
     try {
-      audio.currentTime = 0;
-      audio.play().catch(e => {
+      // Создаем клон аудио для возможности одновременного воспроизведения
+      const audioClone = audio.cloneNode();
+      audioClone.volume = audio.volume;
+      audioClone.play().catch(e => {
         console.log('SFX play error:', e);
       });
+      
+      // Очистка после завершения
+      audioClone.onended = () => {
+        audioClone.src = '';
+      };
+      
     } catch (error) {
       console.log('Play SFX error:', error);
     }
@@ -268,7 +304,11 @@
   function startGame(){
     resetRun();
     scene = Scene.PLAY;
-    startMusic();
+    
+    // Пытаемся запустить музыку при старте игры
+    setTimeout(() => {
+      startMusic();
+    }, 100);
   }
 
   function goMenu(){
@@ -397,12 +437,8 @@
   // ================= INPUT =================
   // Глобальный обработчик для разблокировки аудио
   function globalUnlockHandler() {
+    console.log('Пользовательское взаимодействие обнаружено');
     unlockAudio();
-    
-    // Удаляем обработчики после первого срабатывания
-    document.removeEventListener('click', globalUnlockHandler);
-    document.removeEventListener('touchstart', globalUnlockHandler);
-    document.removeEventListener('keydown', globalUnlockHandler);
   }
   
   // Добавляем обработчики для разблокировки аудио
@@ -766,10 +802,12 @@
   
   // Автоматически пытаемся разблокировать аудио при загрузке
   window.addEventListener('load', () => {
+    console.log('Страница загружена, пытаемся разблокировать аудио...');
+    
     // Даем небольшой таймаут для загрузки ресурсов
     setTimeout(() => {
       unlockAudio();
-    }, 500);
+    }, 1000);
   });
   
   requestAnimationFrame(tick);
