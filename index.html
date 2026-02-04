@@ -88,7 +88,19 @@
   </div>
 
 <script>
-(() => {
+// Дожидаемся полной загрузки страницы
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('DOM загружен, запускаем игру...');
+  
+  // Запускаем игру после полной загрузки
+  setTimeout(() => {
+    startGameScript();
+  }, 100);
+});
+
+function startGameScript() {
+  console.log('Запускаем игровой скрипт...');
+  
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d', { alpha:false });
   ctx.imageSmoothingEnabled = false;
@@ -134,27 +146,37 @@
   const audioUnlockOverlay = document.getElementById('audioUnlockOverlay');
   const unlockButton = document.getElementById('unlockButton');
 
-  // Функция разблокировки аудио с явным взаимодействием
+  // Функция разблокировки аудио
   function unlockAudio() {
-    if (audioUnlocked) return;
+    console.log('Функция unlockAudio вызвана');
     
-    console.log('Явная разблокировка аудио...');
+    if (audioUnlocked) {
+      console.log('Аудио уже разблокировано');
+      return;
+    }
     
-    // Создаем временный аудио элемент для разблокировки
-    const unlockSound = new Audio();
-    unlockSound.src = ASSET_JUMP;
-    unlockSound.volume = 0.5;
+    console.log('Пытаемся разблокировать аудио...');
     
-    // Пытаемся воспроизвести звук
-    unlockSound.play().then(() => {
-      console.log('Аудио успешно разблокировано!');
+    // Пытаемся воспроизвести звук прыжка для разблокировки
+    sfxJump.currentTime = 0;
+    sfxJump.volume = 0.5;
+    
+    sfxJump.play().then(() => {
+      console.log('✅ Аудио успешно разблокировано!');
       audioUnlocked = true;
+      
+      // Сразу паузируем звук прыжка
+      sfxJump.pause();
+      sfxJump.currentTime = 0;
+      sfxJump.volume = 0.45;
       
       // Скрываем оверлей разблокировки
       audioUnlockOverlay.style.display = 'none';
+      console.log('Оверлей скрыт');
       
-      // Запускаем музыку, если мы в игре
+      // Если мы в игре, запускаем музыку
       if (scene === Scene.PLAY) {
+        console.log('Запускаем музыку после разблокировки...');
         startMusic();
       }
       
@@ -162,34 +184,63 @@
       warmupAudio();
       
     }).catch(error => {
-      console.log('Ошибка разблокировки аудио:', error);
+      console.log('❌ Ошибка разблокировки аудио:', error);
       
-      // Показываем сообщение об ошибке
-      audioUnlockOverlay.innerHTML = `
-        <div style="text-align: center;">
-          <p style="font-size: 22px; margin-bottom: 10px;">⚠️ ОШИБКА ЗВУКА ⚠️</p>
-          <p style="font-size: 16px; margin-bottom: 20px; opacity: 0.9;">
-            Пожалуйста, разрешите воспроизведение звука<br>
-            в настройках вашего браузера
-          </p>
-          <button onclick="location.reload()" class="unlock-button">ПОПРОБОВАТЬ СНОВА</button>
-        </div>
-      `;
+      // Пробуем другой способ - через временный аудио элемент
+      try {
+        const tempAudio = new Audio();
+        tempAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
+        tempAudio.play().then(() => {
+          console.log('✅ Аудио разблокировано через временный элемент');
+          audioUnlocked = true;
+          audioUnlockOverlay.style.display = 'none';
+          
+          if (scene === Scene.PLAY) {
+            startMusic();
+          }
+        }).catch(e => {
+          console.log('❌ Второй способ тоже не сработал:', e);
+          showAudioError();
+        });
+      } catch (e) {
+        console.log('❌ Не удалось создать временный аудио элемент:', e);
+        showAudioError();
+      }
     });
   }
+
+  function showAudioError() {
+    audioUnlockOverlay.innerHTML = `
+      <div style="text-align: center;">
+        <p style="font-size: 22px; margin-bottom: 10px;">⚠️ ОШИБКА ЗВУКА ⚠️</p>
+        <p style="font-size: 16px; margin-bottom: 20px; opacity: 0.9;">
+          Игра продолжит работу без звука.<br>
+          Вы можете играть сейчас или обновить страницу.
+        </p>
+        <button onclick="continueWithoutAudio()" class="unlock-button" style="background: #444;">
+          ИГРАТЬ БЕЗ ЗВУКА
+        </button>
+      </div>
+    `;
+  }
+
+  // Глобальная функция для продолжения без звука
+  window.continueWithoutAudio = function() {
+    console.log('Продолжаем без звука');
+    audioUnlockOverlay.style.display = 'none';
+    if (scene === Scene.MENU) {
+      startGame();
+    }
+  };
 
   // "Разогрев" аудио элементов
   function warmupAudio() {
     if (!audioUnlocked) return;
     
+    console.log('Разогреваем звуковые эффекты...');
+    
     try {
       // "Разогреваем" звуковые эффекты
-      sfxJump.currentTime = 0;
-      sfxJump.play().then(() => {
-        sfxJump.pause();
-        sfxJump.currentTime = 0;
-      }).catch(() => {});
-      
       sfxHit.currentTime = 0;
       sfxHit.play().then(() => {
         sfxHit.pause();
@@ -210,10 +261,10 @@
     try {
       music.currentTime = 0;
       music.play().then(() => {
-        console.log('Музыка запущена успешно');
+        console.log('✅ Музыка запущена успешно');
         musicPlaying = true;
       }).catch(error => {
-        console.log('Ошибка запуска музыки:', error);
+        console.log('❌ Ошибка запуска музыки:', error);
         musicPlaying = false;
       });
     } catch (error) {
@@ -369,16 +420,20 @@
   }
 
   function startGame(){
+    console.log('startGame вызвана, аудио разблокировано:', audioUnlocked);
+    
     // Если аудио не разблокировано, показываем оверлей
     if (!audioUnlocked) {
+      console.log('Показываем оверлей разблокировки аудио');
       audioUnlockOverlay.style.display = 'flex';
       return;
     }
     
+    console.log('Запускаем игру...');
     resetRun();
     scene = Scene.PLAY;
     
-    // Запускаем музыку
+    // Запускаем музыку с небольшой задержкой
     setTimeout(() => {
       startMusic();
     }, 100);
@@ -509,33 +564,52 @@
 
   // ================= INPUT =================
   // Обработчики для разблокировки аудио
-  unlockButton.addEventListener('click', unlockAudio);
+  console.log('Добавляем обработчик для кнопки разблокировки...');
+  unlockButton.addEventListener('click', function(e) {
+    console.log('Кнопка разблокировки нажата');
+    e.stopPropagation();
+    unlockAudio();
+  });
   
   // Также разблокируем по клику в любом месте оверлея
-  audioUnlockOverlay.addEventListener('click', (e) => {
-    if (e.target === audioUnlockOverlay || e.target === unlockButton) {
+  audioUnlockOverlay.addEventListener('click', function(e) {
+    console.log('Клик по оверлею аудио');
+    if (e.target === audioUnlockOverlay) {
       unlockAudio();
     }
   });
 
-  canvas.addEventListener('pointerdown', (e) => {
+  // Обработчик для canvas
+  canvas.addEventListener('pointerdown', function(e) {
+    console.log('Клик по canvas, сцена:', scene);
+    
     // Если аудио не разблокировано, показываем оверлей
     if (!audioUnlocked) {
+      console.log('Аудио не разблокировано, показываем оверлей');
       audioUnlockOverlay.style.display = 'flex';
       return;
     }
     
     const p = toCanvasCoords(e.clientX, e.clientY);
 
-    if (scene === Scene.PLAY) { jump(); return; }
+    if (scene === Scene.PLAY) { 
+      console.log('Прыжок в игре');
+      jump(); 
+      return; 
+    }
 
     if (scene === Scene.MENU) {
+      console.log('Клик в меню');
       const b = btnMenuPlay();
-      if (pointInRect(p.x, p.y, b)) startGame();
+      if (pointInRect(p.x, p.y, b)) {
+        console.log('Нажата кнопка ИГРАТЬ');
+        startGame();
+      }
       return;
     }
 
     if (scene === Scene.GAMEOVER) {
+      console.log('Клик в gameover');
       const b1 = btnGoCont(), b2 = btnGoMenu();
       if (pointInRect(p.x, p.y, b1)) startGame();
       else if (pointInRect(p.x, p.y, b2)) goMenu();
@@ -884,4 +958,9 @@
     };
   }
   
-  // Проверяем
+  console.log('Игра инициализирована, запускаем игровой цикл...');
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>
