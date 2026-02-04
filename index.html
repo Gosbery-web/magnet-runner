@@ -32,13 +32,12 @@
       border-radius: 16px;
       background:#000;
       box-shadow: 0 18px 55px rgba(0,0,0,.45);
-      touch-action: none; /* важно для мобилок */
+      touch-action: none;
       user-select: none;
       -webkit-user-select: none;
       -webkit-tap-highlight-color: transparent;
     }
 
-    /* Экран разблокировки аудио */
     .audio-unlock-overlay {
       position: absolute;
       inset: 0;
@@ -76,8 +75,8 @@
 
     <div id="audioUnlockOverlay" class="audio-unlock-overlay">
       <div>
-        <p style="font-size:22px;margin-bottom:10px;">🎵 ВКЛЮЧИТЬ ЗВУК 🎵</p>
-        <p style="font-size:16px;margin-bottom:20px;opacity:.9;">Для полного погружения в игру</p>
+        <p style="font-size:22px;margin-bottom:10px;">🎵 ЗВУК 🎵</p>
+        <p style="font-size:16px;margin-bottom:20px;opacity:.9;">Можно включать/выключать потом в игре</p>
 
         <button id="unlockButton" class="unlock-button">ВКЛЮЧИТЬ ЗВУК</button>
 
@@ -122,11 +121,7 @@ function startGameScript() {
   canvas.width = W; canvas.height = H;
 
   // ================= FILES (рядом с index.html) =================
-  // (если у тебя бывают проблемы с кешем — добавляй ?v=123 вручную к ссылке сайта, или включи VER ниже)
-  // const VER = '1';
-  // const V = '?v=' + VER;
   const V = '';
-
   const ASSET_BG_BACK   = 'bg_back.png' + V;
   const ASSET_BG_FRONT  = 'bg_front.png' + V;
   const ASSET_PLAYERRUN = 'cashier_run.png' + V;
@@ -141,10 +136,10 @@ function startGameScript() {
   const ASSET_JUMP  = 'jump.wav' + V;
   const ASSET_HIT   = 'hit.wav' + V;
 
-  // ================= АУДИО (10/10 под мобилки) =================
-  let audioUnlocked = false;
-  let allowNoAudio = false;
-  let musicPlaying = false;
+  // ================= АУДИО (исправлено: можно вкл/выкл всегда) =================
+  let audioUnlocked = false;                             // разрешение браузера (1 раз)
+  let audioEnabled  = (localStorage.getItem('audioEnabled') !== 'false'); // предпочтение пользователя
+  let musicPlaying  = false;
 
   const music = new Audio(ASSET_MUSIC);
   music.loop = true;
@@ -163,18 +158,25 @@ function startGameScript() {
   const unlockButton = document.getElementById('unlockButton');
   const noAudioButton = document.getElementById('noAudioButton');
 
-  function setAudioMuted(muted){
-    const mv = muted ? 0 : 0.30;
-    const jv = muted ? 0 : 0.45;
-    const hv = muted ? 0 : 0.65;
-    music.volume = mv;
-    sfxJump.volume = jv;
-    sfxHit.volume  = hv;
+  function applyAudioSettings(){
+    if (!audioUnlocked) return;
+
+    music.volume   = audioEnabled ? 0.30 : 0;
+    sfxJump.volume = audioEnabled ? 0.45 : 0;
+    sfxHit.volume  = audioEnabled ? 0.65 : 0;
+
+    localStorage.setItem('audioEnabled', String(audioEnabled));
+
+    // музыка зависит от сцены и включенности
+    if (!audioEnabled) {
+      stopMusic();
+    } else {
+      if (scene === Scene.PLAY) startMusic();
+    }
   }
 
   function warmupAudio() {
     if (!audioUnlocked) return;
-    // “прогрев” — тихо и коротко
     try {
       const t = sfxHit.cloneNode();
       t.volume = 0;
@@ -184,23 +186,25 @@ function startGameScript() {
 
   function startMusic(){
     if (!audioUnlocked) return;
+    if (!audioEnabled) return;
     if (musicPlaying) return;
-    if (music.volume === 0) return; // “без звука”
     try {
-      music.currentTime = 0;
+      if (music.currentTime > 0.02) {
+        // не всегда нужно с нуля, но оставим твой стиль (можно менять)
+        music.currentTime = 0;
+      }
       music.play().then(()=> { musicPlaying = true; }).catch(()=>{ musicPlaying = false; });
     } catch { musicPlaying = false; }
   }
 
   function stopMusic(){
     try { music.pause(); } catch {}
-    try { music.currentTime = 0; } catch {}
     musicPlaying = false;
   }
 
   function playSfx(a){
     if (!audioUnlocked) return;
-    if (a.volume === 0) return; // “без звука”
+    if (!audioEnabled) return;
     try {
       const c = a.cloneNode();
       c.volume = a.volume;
@@ -213,39 +217,39 @@ function startGameScript() {
     if (audioUnlocked) return;
     log('unlockAudio...');
     try {
-      // iOS/Android часто пропускает короткий sfx как “user gesture”
+      // Разблокировка через user gesture
+      const oldVol = sfxJump.volume;
+      sfxJump.volume = 0.0;          // можно и 0, главное чтобы play() прошёл
       sfxJump.currentTime = 0;
       await sfxJump.play();
       sfxJump.pause();
       sfxJump.currentTime = 0;
+      sfxJump.volume = oldVol;
 
       audioUnlocked = true;
-      allowNoAudio = false;
-      setAudioMuted(false);
       audioUnlockOverlay.style.display = 'none';
       warmupAudio();
-
-      // если уже были в игре/стартуем — музыка стартанёт
-      if (scene === Scene.PLAY) startMusic();
+      applyAudioSettings();          // применяем текущие настройки (вкл/выкл)
     } catch (e) {
-      // если не получилось — остаёмся на оверлее
       log('unlock fail', e);
+      // остаёмся на оверлее
     }
   }
 
-  function continueWithoutAudio(){
-    allowNoAudio = true;
-    audioUnlocked = true;        // чтобы игра не блокировалась
-    setAudioMuted(true);         // всё в 0
-    stopMusic();
-    audioUnlockOverlay.style.display = 'none';
-    if (scene === Scene.MENU) startGame();
-  }
+  // Кнопки: обе разблокируют аудио (1 раз), но задают preference
+  unlockButton.addEventListener('click', (e)=>{
+    e.preventDefault(); e.stopPropagation();
+    audioEnabled = true;
+    unlockAudio();
+  }, { passive:false });
 
-  unlockButton.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); unlockAudio(); }, { passive:false });
-  noAudioButton.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); continueWithoutAudio(); }, { passive:false });
+  noAudioButton.addEventListener('click', (e)=>{
+    e.preventDefault(); e.stopPropagation();
+    audioEnabled = false;
+    unlockAudio();
+  }, { passive:false });
 
-  // тап по оверлею тоже пробует unlock
+  // тап по оверлею — просто unlock (с текущим audioEnabled из localStorage)
   audioUnlockOverlay.addEventListener('pointerdown', (e)=>{
     e.preventDefault();
     unlockAudio();
@@ -281,14 +285,13 @@ function startGameScript() {
   const GROUND_Y = H - 34;
 
   // ====== ФИЗИКА ПРЫЖКА (ЧЁТКАЯ ДУГА) ======
-  // Всё зависит от "px/sec" и dt в секундах — так дуга будет одинаковой на любом FPS.
   const GRAVITY = 2600;      // px/s^2
-  const JUMP_V0 = 980;       // px/s (вверх)
-  const JUMP_CUT = 0.55;     // если отпустил рано — режем скорость вверх (для “мягкого” контроля)
+  const JUMP_V0 = 980;       // px/s
+  const JUMP_CUT = 0.55;
 
   // скорость/сложность
-  let worldSpeed = 260;      // px/s по земле (старт)
-  const MAX_SPEED = 560;     // px/s
+  let worldSpeed = 260;
+  const MAX_SPEED = 560;
   const SPEED_INCREASE_INTERVAL = 1.2; // сек
   const SPEED_INCREMENT = 14; // px/s
 
@@ -303,7 +306,7 @@ function startGameScript() {
   let runFrame = 0, runTimer = 0;
   const RUN_FPS_BASE = 14;
 
-  // Препятствия размеры (оставил близко к твоим, но чуть аккуратнее)
+  // Препятствия
   const TARGET_BAB_HEIGHT  = 72;
   const TARGET_CANE_HEIGHT = 70;
   const TARGET_CART_HEIGHT = 66;
@@ -314,29 +317,25 @@ function startGameScript() {
   const MAX_CART_WIDTH = 92;
   const MAX_BOX_WIDTH  = 78;
 
-  // Гэпы: “честно”, без невозможных серий
   function minGapX() {
-    const t = worldSpeed / MAX_SPEED;     // 0..1
-    const base = 220 - t * 60;            // чем быстрее — тем меньше средний гэп
-    const diff = difficultyLevel * 1.2;   // чуть плотнее со временем
+    const t = worldSpeed / MAX_SPEED;
+    const base = 220 - t * 60;
+    const diff = difficultyLevel * 1.2;
     return Math.max(150, base - diff);
   }
 
-  // ====== STATE ======
   let score = 0;
   let frozenScore = 0;
-  let spawnCooldown = 0;  // сек
-  let antiSpam = 0;       // сек
+  let spawnCooldown = 0;
+  let antiSpam = 0;
   const obstacles = [];
   let scrollBack = 0;
   let scrollFront = 0;
   let lastObstacleFamily = null;
 
-  // Jump control
   let jumpHeld = false;
   let jumpedThisPress = false;
 
-  // ====== UTILS ======
   function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
   function rand(min, max){ return Math.random() * (max - min) + min; }
   function aspectW(img, targetH){
@@ -349,7 +348,6 @@ function startGameScript() {
 
   function resetRun(){
     obstacles.length = 0;
-
     worldSpeed = 260;
     speedTimer = 0;
     difficultyLevel = 0;
@@ -357,7 +355,7 @@ function startGameScript() {
     score = 0;
     frozenScore = 0;
 
-    spawnCooldown = 0.45; // быстрее стартуем
+    spawnCooldown = 0.45;
     antiSpam = 0;
 
     scrollBack = 0;
@@ -371,23 +369,18 @@ function startGameScript() {
     runTimer = 0;
 
     lastObstacleFamily = null;
-
     jumpHeld = false;
     jumpedThisPress = false;
   }
 
   function startGame(){
-    // если ни звук, ни “без звука” — блокируем через оверлей
-    if (!audioUnlocked && !allowNoAudio) {
+    if (!audioUnlocked) {
       audioUnlockOverlay.style.display = 'flex';
       return;
     }
-
     resetRun();
     scene = Scene.PLAY;
-
-    // музыка строго после user gesture — но если audioUnlocked true, уже можно
-    startMusic();
+    applyAudioSettings();
   }
 
   function goMenu(){
@@ -416,34 +409,28 @@ function startGameScript() {
     if (scene !== Scene.PLAY) return;
     if (!player.onGround) return;
     player.onGround = false;
-    // вверх — отрицательная скорость по Y (так удобнее)
     player.vy = -JUMP_V0;
     playSfx(sfxJump);
   }
 
   function endJumpEarly(){
-    // “обрезаем” прыжок, если отпустили рано и ещё летим вверх
     if (scene !== Scene.PLAY) return;
-    if (player.vy < 0) {
-      player.vy *= JUMP_CUT;
-    }
+    if (player.vy < 0) player.vy *= JUMP_CUT;
   }
 
   function canSpawnNow(){
     if (obstacles.length === 0) return true;
     const last = obstacles[obstacles.length - 1];
     const lastRight = last.x + last.w;
-    // спавним справа за экраном => чтобы на экране было расстояние
     return (W - lastRight) >= minGapX();
   }
 
   function chooseObstacleType(){
     const t = worldSpeed / MAX_SPEED;
-    const boxChance = 0.42 + t * 0.08;   // 0.42..0.50
+    const boxChance = 0.42 + t * 0.08;
     const wantBox = Math.random() < boxChance;
     let family = wantBox ? 'box' : 'human';
 
-    // лёгкое чередование, чтобы не было однотипной “полосы”
     if (lastObstacleFamily && Math.random() < 0.62 && family === lastObstacleFamily) {
       family = (family === 'box') ? 'human' : 'box';
     }
@@ -452,8 +439,7 @@ function startGameScript() {
     if (family === 'box') return 'box';
 
     const r = Math.random();
-    // чем быстрее — тем чаще тележка
-    const cartBias = 0.18 + t * 0.20; // 0.18..0.38
+    const cartBias = 0.18 + t * 0.20;
     if (r < 0.52 - t*0.08) return 'bab1';
     if (r < 0.80 - t*0.04) return 'bab2';
     return (Math.random() < cartBias) ? 'bab3' : 'bab2';
@@ -481,12 +467,7 @@ function startGameScript() {
       w = clamp(w, 40, MAX_BOX_WIDTH);
     }
 
-    obstacles.push({
-      type,
-      x: W + 16,
-      y: GROUND_Y - h,
-      w, h
-    });
+    obstacles.push({ type, x: W + 16, y: GROUND_Y - h, w, h });
   }
 
   // ================= UI =================
@@ -494,6 +475,9 @@ function startGameScript() {
   const btnMenuPlay = () => btnRectCentered(Math.round(HUD_H + 225), 190, 38);
   const btnGoCont   = () => btnRectCentered(Math.round(HUD_H + 230), 210, 34);
   const btnGoMenu   = () => btnRectCentered(Math.round(HUD_H + 270), 210, 34);
+
+  // Кнопка звука в HUD (переключатель)
+  const soundBtn = { x: W - 44, y: 10, w: 34, h: 34 };
 
   function pointInRect(px, py, r){ return px>=r.x && px<=r.x+r.w && py>=r.y && py<=r.y+r.h; }
   function toCanvasCoords(clientX, clientY){
@@ -517,17 +501,27 @@ function startGameScript() {
     ctx.textAlign = 'left';
   }
 
-  // ================= INPUT (10/10 совместимость) =================
+  // ================= INPUT =================
   function handleTap(clientX, clientY){
-    // если ещё не разблокировали звук — показываем оверлей и выходим
-    if (!audioUnlocked && !allowNoAudio) {
+    if (!audioUnlocked) {
       audioUnlockOverlay.style.display = 'flex';
       return;
     }
 
     const p = toCanvasCoords(clientX, clientY);
 
-    if (scene === Scene.PLAY) { jumpHeld = true; if (!jumpedThisPress) { doJump(); jumpedThisPress = true; } return; }
+    // 1) Переключатель звука работает ВЕЗДЕ (menu/play/gameover)
+    if (pointInRect(p.x, p.y, soundBtn)) {
+      audioEnabled = !audioEnabled;
+      applyAudioSettings();
+      return;
+    }
+
+    if (scene === Scene.PLAY) {
+      jumpHeld = true;
+      if (!jumpedThisPress) { doJump(); jumpedThisPress = true; }
+      return;
+    }
 
     if (scene === Scene.MENU) {
       const b = btnMenuPlay();
@@ -549,12 +543,10 @@ function startGameScript() {
     endJumpEarly();
   }
 
-  // pointer
   canvas.addEventListener('pointerdown', (e)=>{ e.preventDefault(); handleTap(e.clientX, e.clientY); }, { passive:false });
   canvas.addEventListener('pointerup',   (e)=>{ e.preventDefault(); handleRelease(); }, { passive:false });
   canvas.addEventListener('pointercancel', (e)=>{ e.preventDefault(); handleRelease(); }, { passive:false });
 
-  // touch fallback
   canvas.addEventListener('touchstart', (e)=>{
     e.preventDefault();
     const t = e.changedTouches[0];
@@ -566,16 +558,11 @@ function startGameScript() {
     handleRelease();
   }, { passive:false });
 
-  // mouse fallback
   canvas.addEventListener('mousedown', (e)=>{ e.preventDefault(); handleTap(e.clientX, e.clientY); }, { passive:false });
   window.addEventListener('mouseup', ()=>handleRelease());
 
-  // keyboard
   window.addEventListener('keydown', (e) => {
-    if (!audioUnlocked && !allowNoAudio) {
-      audioUnlockOverlay.style.display = 'flex';
-      return;
-    }
+    if (!audioUnlocked) { audioUnlockOverlay.style.display = 'flex'; return; }
 
     if (e.code === 'Space' || e.code === 'ArrowUp') {
       e.preventDefault();
@@ -607,6 +594,19 @@ function startGameScript() {
     for (; x < W; x += tileW) ctx.drawImage(img, x, drawY, tileW, drawH);
   }
 
+  function drawSoundButton(){
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.beginPath();
+    ctx.roundRect(soundBtn.x, soundBtn.y, soundBtn.w, soundBtn.h, 8);
+    ctx.fill();
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(audioEnabled ? '🔊' : '🔇', soundBtn.x + soundBtn.w/2, soundBtn.y + 22);
+    ctx.textAlign = 'left';
+  }
+
   function drawHud(){
     ctx.fillStyle = '#0b0b0c';
     ctx.fillRect(0, 0, W, HUD_H);
@@ -631,6 +631,8 @@ function startGameScript() {
       const sp = Math.round((worldSpeed / MAX_SPEED) * 100);
       ctx.fillText(`Скорость: ${sp}%`, 14, 76);
     }
+
+    drawSoundButton();
   }
 
   function drawBackgroundParallax(){
@@ -732,11 +734,9 @@ function startGameScript() {
   function tick(now){
     const dtMs = Math.min(34, now - last);
     last = now;
-
-    const dt = dtMs / 1000; // секунды
+    const dt = dtMs / 1000;
 
     if (scene === Scene.PLAY) {
-      // скорость растёт предсказуемо
       speedTimer += dt;
       if (speedTimer >= SPEED_INCREASE_INTERVAL) {
         speedTimer -= SPEED_INCREASE_INTERVAL;
@@ -746,17 +746,13 @@ function startGameScript() {
         }
       }
 
-      // счёт чуть зависит от скорости (приятнее)
       const scoreMul = 1 + (worldSpeed - 260) / 520;
       score += dt * 120 * scoreMul;
 
-      // параллакс
       const moveX = worldSpeed * dt;
       scrollBack  += moveX * 0.22;
       scrollFront += moveX * 0.75;
 
-      // ====== физика прыжка (дуга) ======
-      // вверх отрицательно
       player.vy += GRAVITY * dt;
       player.y  += player.vy * dt;
 
@@ -766,12 +762,6 @@ function startGameScript() {
         player.onGround = true;
       }
 
-      // если держим прыжок — НЕ добавляем “плато”,
-      // но позволяем не резать скорость вверх. Если отпустил — endJumpEarly() уже обрежет.
-      // (jumpHeld здесь влияет только тем, что мы НЕ вызываем endJumpEarly автоматически)
-      // Реальный контроль — в endJumpEarly()
-
-      // анимация: чем быстрее — тем чуть быстрее бег
       const runFps = RUN_FPS_BASE * (1 + (worldSpeed - 260) / 900);
       if (player.onGround) {
         runTimer += dt;
@@ -784,7 +774,6 @@ function startGameScript() {
         runFrame = 1;
       }
 
-      // spawn
       spawnCooldown -= dt;
       antiSpam -= dt;
 
@@ -792,31 +781,26 @@ function startGameScript() {
         if (canSpawnNow()) {
           spawnObstacle();
 
-          // анти-спам и кулдаун: гарантируем играбельность
           const t = worldSpeed / MAX_SPEED;
           antiSpam = Math.max(0.28, 0.78 - t * 0.40);
 
           const r = Math.random();
           let base;
-          if (r < 0.22)      base = rand(0.55, 0.85); // близко, но реально
-          else if (r < 0.84) base = rand(0.85, 1.45); // обычно
-          else               base = rand(1.45, 2.25); // далеко
+          if (r < 0.22)      base = rand(0.55, 0.85);
+          else if (r < 0.84) base = rand(0.85, 1.45);
+          else               base = rand(1.45, 2.25);
 
-          // при высокой скорости — немного уменьшаем время, но не в “невозможно”
           base = Math.max(0.50, base - (worldSpeed - 260) / 1200);
-
           spawnCooldown = base;
         } else {
           spawnCooldown = 0.08;
         }
       }
 
-      // движение + столкновения
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const o = obstacles[i];
         o.x -= moveX;
 
-        // Хитбокс игрока: компактный и “в центре”
         const pHit = {
           x: player.x + player.w * 0.34,
           y: (player.y - player.h) + player.h * 0.58,
@@ -824,7 +808,6 @@ function startGameScript() {
           h: player.h * 0.30
         };
 
-        // Хитбокс препятствий: мягкий
         let oHit;
         if (o.type === 'bab3') {
           oHit = { x:o.x + 10, y:o.y + o.h*0.34, w:o.w - 20, h:o.h*0.56 };
@@ -849,6 +832,8 @@ function startGameScript() {
     requestAnimationFrame(tick);
   }
 
+  // При старте — если уже разблокировано в этой вкладке нельзя понять,
+  // но мы сохраняем предпочтение: иконка будет правильная сразу.
   requestAnimationFrame(tick);
 }
 </script>
