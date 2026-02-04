@@ -9,6 +9,7 @@
     body{
       display:flex; align-items:center; justify-content:center;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      overscroll-behavior: none;
     }
 
     .wrap{
@@ -31,16 +32,16 @@
       border-radius: 16px;
       background:#000;
       box-shadow: 0 18px 55px rgba(0,0,0,.45);
-      touch-action: manipulation;
+      touch-action: none; /* важно для мобилок */
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
     }
-    
+
     /* Экран разблокировки аудио */
     .audio-unlock-overlay {
       position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
+      inset: 0;
       background: rgba(0, 0, 0, 0.85);
       display: flex;
       align-items: center;
@@ -52,7 +53,7 @@
       font-size: 18px;
       flex-direction: column;
     }
-    
+
     .unlock-button {
       background: #c81f2a;
       color: white;
@@ -64,248 +65,191 @@
       cursor: pointer;
       font-weight: bold;
     }
-    
-    .unlock-button:hover {
-      background: #d93641;
-    }
-    
-    .unlock-button:active {
-      transform: scale(0.98);
-    }
+
+    .unlock-button:hover { background: #d93641; }
+    .unlock-button:active { transform: scale(0.98); }
   </style>
 </head>
 <body>
   <div class="wrap">
     <canvas id="c"></canvas>
+
     <div id="audioUnlockOverlay" class="audio-unlock-overlay">
       <div>
-        <p style="font-size: 22px; margin-bottom: 10px;">🎵 ВКЛЮЧИТЬ ЗВУК 🎵</p>
-        <p style="font-size: 16px; margin-bottom: 20px; opacity: 0.9;">Для полного погружения в игру</p>
+        <p style="font-size:22px;margin-bottom:10px;">🎵 ВКЛЮЧИТЬ ЗВУК 🎵</p>
+        <p style="font-size:16px;margin-bottom:20px;opacity:.9;">Для полного погружения в игру</p>
+
         <button id="unlockButton" class="unlock-button">ВКЛЮЧИТЬ ЗВУК</button>
-        <p style="font-size: 14px; margin-top: 20px; opacity: 0.7;">Или нажмите в любом месте экрана</p>
+
+        <button id="noAudioButton" class="unlock-button" style="background:#444;margin-top:12px;">
+          ИГРАТЬ БЕЗ ЗВУКА
+        </button>
+
+        <p style="font-size:14px;margin-top:20px;opacity:.7;">Можно также тапнуть по экрану</p>
       </div>
     </div>
   </div>
 
 <script>
-// Дожидаемся полной загрузки страницы
-document.addEventListener('DOMContentLoaded', function() {
-  console.log('DOM загружен, запускаем игру...');
-  
-  // Запускаем игру после полной загрузки
-  setTimeout(() => {
-    startGameScript();
-  }, 100);
-});
+document.addEventListener('DOMContentLoaded', () => startGameScript());
 
 function startGameScript() {
-  console.log('Запускаем игровой скрипт...');
-  
+  const DEBUG = false;
+  const log = (...a) => { if (DEBUG) console.log(...a); };
+
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d', { alpha:false });
   ctx.imageSmoothingEnabled = false;
+
+  // ===== Polyfill roundRect ДО использования =====
+  if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+      if (w < 2 * r) r = w / 2;
+      if (h < 2 * r) r = h / 2;
+      this.beginPath();
+      this.moveTo(x + r, y);
+      this.arcTo(x + w, y, x + w, y + h, r);
+      this.arcTo(x + w, y + h, x, y + h, r);
+      this.arcTo(x, y + h, x, y, r);
+      this.arcTo(x, y, x + w, y, r);
+      this.closePath();
+      return this;
+    };
+  }
 
   // ================= BASE RESOLUTION (вертикально) =================
   const W = 360, H = 640;
   canvas.width = W; canvas.height = H;
 
   // ================= FILES (рядом с index.html) =================
-  const ASSET_BG_BACK   = 'bg_back.png';
-  const ASSET_BG_FRONT  = 'bg_front.png';
-  const ASSET_PLAYERRUN = 'cashier_run.png';
-  const ASSET_BAB1 = 'babushka.png';
-  const ASSET_BAB2 = 'babushka_cane.png';
-  const ASSET_BAB3 = 'babushka_cart.png';
-  const ASSET_BOX  = 'box.png';
-  const ASSET_MUSIC = 'music.mp3';
-  const ASSET_JUMP  = 'jump.wav';
-  const ASSET_HIT   = 'hit.wav';
+  // (если у тебя бывают проблемы с кешем — добавляй ?v=123 вручную к ссылке сайта, или включи VER ниже)
+  // const VER = '1';
+  // const V = '?v=' + VER;
+  const V = '';
 
-  // ================= СИСТЕМА АУДИО С ЯВНОЙ РАЗБЛОКИРОВКОЙ =================
+  const ASSET_BG_BACK   = 'bg_back.png' + V;
+  const ASSET_BG_FRONT  = 'bg_front.png' + V;
+  const ASSET_PLAYERRUN = 'cashier_run.png' + V;
+
+  const ASSET_BAB1 = 'babushka.png' + V;
+  const ASSET_BAB2 = 'babushka_cane.png' + V;
+  const ASSET_BAB3 = 'babushka_cart.png' + V;
+
+  const ASSET_BOX  = 'box.png' + V;
+
+  const ASSET_MUSIC = 'music.mp3' + V;
+  const ASSET_JUMP  = 'jump.wav' + V;
+  const ASSET_HIT   = 'hit.wav' + V;
+
+  // ================= АУДИО (10/10 под мобилки) =================
   let audioUnlocked = false;
+  let allowNoAudio = false;
   let musicPlaying = false;
-  
-  // Создаем аудио элементы
-  const music = new Audio();
-  music.src = ASSET_MUSIC;
+
+  const music = new Audio(ASSET_MUSIC);
   music.loop = true;
   music.volume = 0.30;
   music.preload = 'auto';
-  
-  const sfxJump = new Audio();
-  sfxJump.src = ASSET_JUMP;
+
+  const sfxJump = new Audio(ASSET_JUMP);
   sfxJump.volume = 0.45;
   sfxJump.preload = 'auto';
-  
-  const sfxHit = new Audio();
-  sfxHit.src = ASSET_HIT;
+
+  const sfxHit = new Audio(ASSET_HIT);
   sfxHit.volume = 0.65;
   sfxHit.preload = 'auto';
 
-  // Элементы для разблокировки
   const audioUnlockOverlay = document.getElementById('audioUnlockOverlay');
   const unlockButton = document.getElementById('unlockButton');
+  const noAudioButton = document.getElementById('noAudioButton');
 
-  // Функция разблокировки аудио
-  function unlockAudio() {
-    console.log('Функция unlockAudio вызвана');
-    
-    if (audioUnlocked) {
-      console.log('Аудио уже разблокировано');
-      return;
-    }
-    
-    console.log('Пытаемся разблокировать аудио...');
-    
-    // Пытаемся воспроизвести звук прыжка для разблокировки
-    sfxJump.currentTime = 0;
-    sfxJump.volume = 0.5;
-    
-    sfxJump.play().then(() => {
-      console.log('✅ Аудио успешно разблокировано!');
-      audioUnlocked = true;
-      
-      // Сразу паузируем звук прыжка
-      sfxJump.pause();
-      sfxJump.currentTime = 0;
-      sfxJump.volume = 0.45;
-      
-      // Скрываем оверлей разблокировки
-      audioUnlockOverlay.style.display = 'none';
-      console.log('Оверлей скрыт');
-      
-      // Если мы в игре, запускаем музыку
-      if (scene === Scene.PLAY) {
-        console.log('Запускаем музыку после разблокировки...');
-        startMusic();
-      }
-      
-      // "Разогреваем" звуковые эффекты
-      warmupAudio();
-      
-    }).catch(error => {
-      console.log('❌ Ошибка разблокировки аудио:', error);
-      
-      // Пробуем другой способ - через временный аудио элемент
-      try {
-        const tempAudio = new Audio();
-        tempAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
-        tempAudio.play().then(() => {
-          console.log('✅ Аудио разблокировано через временный элемент');
-          audioUnlocked = true;
-          audioUnlockOverlay.style.display = 'none';
-          
-          if (scene === Scene.PLAY) {
-            startMusic();
-          }
-        }).catch(e => {
-          console.log('❌ Второй способ тоже не сработал:', e);
-          showAudioError();
-        });
-      } catch (e) {
-        console.log('❌ Не удалось создать временный аудио элемент:', e);
-        showAudioError();
-      }
-    });
+  function setAudioMuted(muted){
+    const mv = muted ? 0 : 0.30;
+    const jv = muted ? 0 : 0.45;
+    const hv = muted ? 0 : 0.65;
+    music.volume = mv;
+    sfxJump.volume = jv;
+    sfxHit.volume  = hv;
   }
 
-  function showAudioError() {
-    audioUnlockOverlay.innerHTML = `
-      <div style="text-align: center;">
-        <p style="font-size: 22px; margin-bottom: 10px;">⚠️ ОШИБКА ЗВУКА ⚠️</p>
-        <p style="font-size: 16px; margin-bottom: 20px; opacity: 0.9;">
-          Игра продолжит работу без звука.<br>
-          Вы можете играть сейчас или обновить страницу.
-        </p>
-        <button onclick="continueWithoutAudio()" class="unlock-button" style="background: #444;">
-          ИГРАТЬ БЕЗ ЗВУКА
-        </button>
-      </div>
-    `;
-  }
-
-  // Глобальная функция для продолжения без звука
-  window.continueWithoutAudio = function() {
-    console.log('Продолжаем без звука');
-    audioUnlockOverlay.style.display = 'none';
-    if (scene === Scene.MENU) {
-      startGame();
-    }
-  };
-
-  // "Разогрев" аудио элементов
   function warmupAudio() {
     if (!audioUnlocked) return;
-    
-    console.log('Разогреваем звуковые эффекты...');
-    
+    // “прогрев” — тихо и коротко
     try {
-      // "Разогреваем" звуковые эффекты
-      sfxHit.currentTime = 0;
-      sfxHit.play().then(() => {
-        sfxHit.pause();
-        sfxHit.currentTime = 0;
-      }).catch(() => {});
-      
-    } catch (error) {
-      console.log('Warmup error:', error);
-    }
+      const t = sfxHit.cloneNode();
+      t.volume = 0;
+      t.play().then(()=>{ t.pause(); t.src=''; }).catch(()=>{});
+    } catch {}
   }
 
-  // Воспроизведение музыки
-  function startMusic() {
-    if (!audioUnlocked || musicPlaying) return;
-    
-    console.log('Запуск музыки...');
-    
-    try {
-      music.currentTime = 0;
-      music.play().then(() => {
-        console.log('✅ Музыка запущена успешно');
-        musicPlaying = true;
-      }).catch(error => {
-        console.log('❌ Ошибка запуска музыки:', error);
-        musicPlaying = false;
-      });
-    } catch (error) {
-      console.log('Start music error:', error);
-      musicPlaying = false;
-    }
-  }
-
-  function stopMusic() {
-    if (!musicPlaying) return;
-    
-    try {
-      music.pause();
-      music.currentTime = 0;
-      musicPlaying = false;
-    } catch (error) {
-      console.log('Stop music error:', error);
-    }
-  }
-
-  // Воспроизведение звуковых эффектов
-  function playSfx(audio) {
+  function startMusic(){
     if (!audioUnlocked) return;
-    
+    if (musicPlaying) return;
+    if (music.volume === 0) return; // “без звука”
     try {
-      // Создаем клон аудио для возможности одновременного воспроизведения
-      const audioClone = audio.cloneNode();
-      audioClone.volume = audio.volume;
-      audioClone.play().catch(e => {
-        console.log('SFX play error:', e);
-      });
-      
-      // Очистка после завершения
-      audioClone.onended = () => {
-        audioClone.src = '';
-      };
-      
-    } catch (error) {
-      console.log('Play SFX error:', error);
+      music.currentTime = 0;
+      music.play().then(()=> { musicPlaying = true; }).catch(()=>{ musicPlaying = false; });
+    } catch { musicPlaying = false; }
+  }
+
+  function stopMusic(){
+    try { music.pause(); } catch {}
+    try { music.currentTime = 0; } catch {}
+    musicPlaying = false;
+  }
+
+  function playSfx(a){
+    if (!audioUnlocked) return;
+    if (a.volume === 0) return; // “без звука”
+    try {
+      const c = a.cloneNode();
+      c.volume = a.volume;
+      c.play().catch(()=>{});
+      c.onended = () => { try { c.src=''; } catch {} };
+    } catch {}
+  }
+
+  async function unlockAudio() {
+    if (audioUnlocked) return;
+    log('unlockAudio...');
+    try {
+      // iOS/Android часто пропускает короткий sfx как “user gesture”
+      sfxJump.currentTime = 0;
+      await sfxJump.play();
+      sfxJump.pause();
+      sfxJump.currentTime = 0;
+
+      audioUnlocked = true;
+      allowNoAudio = false;
+      setAudioMuted(false);
+      audioUnlockOverlay.style.display = 'none';
+      warmupAudio();
+
+      // если уже были в игре/стартуем — музыка стартанёт
+      if (scene === Scene.PLAY) startMusic();
+    } catch (e) {
+      // если не получилось — остаёмся на оверлее
+      log('unlock fail', e);
     }
   }
+
+  function continueWithoutAudio(){
+    allowNoAudio = true;
+    audioUnlocked = true;        // чтобы игра не блокировалась
+    setAudioMuted(true);         // всё в 0
+    stopMusic();
+    audioUnlockOverlay.style.display = 'none';
+    if (scene === Scene.MENU) startGame();
+  }
+
+  unlockButton.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); unlockAudio(); }, { passive:false });
+  noAudioButton.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); continueWithoutAudio(); }, { passive:false });
+
+  // тап по оверлею тоже пробует unlock
+  audioUnlockOverlay.addEventListener('pointerdown', (e)=>{
+    e.preventDefault();
+    unlockAudio();
+  }, { passive:false });
 
   // ================= IMAGES =================
   const bgBack = new Image(); bgBack.src = ASSET_BG_BACK;
@@ -336,107 +280,114 @@ function startGameScript() {
   const GAME_H  = H - HUD_H;
   const GROUND_Y = H - 34;
 
-  // ====== УЛУЧШЕННАЯ ФИЗИКА ======
-  const GRAVITY  = 0.78;
-  const JUMP_V   = -12.0;
-  const JUMP_HOLD = 200;
+  // ====== ФИЗИКА ПРЫЖКА (ЧЁТКАЯ ДУГА) ======
+  // Всё зависит от "px/sec" и dt в секундах — так дуга будет одинаковой на любом FPS.
+  const GRAVITY = 2600;      // px/s^2
+  const JUMP_V0 = 980;       // px/s (вверх)
+  const JUMP_CUT = 0.55;     // если отпустил рано — режем скорость вверх (для “мягкого” контроля)
 
-  // скорость и сложность
-  let worldSpeed = 2.8;
+  // скорость/сложность
+  let worldSpeed = 260;      // px/s по земле (старт)
+  const MAX_SPEED = 560;     // px/s
+  const SPEED_INCREASE_INTERVAL = 1.2; // сек
+  const SPEED_INCREMENT = 14; // px/s
+
   let speedTimer = 0;
   let difficultyLevel = 0;
-  const MAX_SPEED = 7.5;
-  const SPEED_INCREASE_INTERVAL = 1200;
-  const SPEED_INCREMENT = 0.08;
-  
-  let jumpStartTime = 0;
-  let isJumping = false;
 
-  // Кассирша
+  // Игрок
   const player = { x:70, y:GROUND_Y, w:72, h:100, vy:0, onGround:true };
 
-  // Анимация бега
-  const RUN_FRAMES = 4, RUN_FPS = 14;
+  // Анимация
+  const RUN_FRAMES = 4;
   let runFrame = 0, runTimer = 0;
+  const RUN_FPS_BASE = 14;
 
-  // Препятствия размеры
-  const TARGET_BAB_HEIGHT  = 75;
-  const TARGET_CANE_HEIGHT = 72;
-  const TARGET_CART_HEIGHT = 68;
-  const TARGET_BOX_HEIGHT  = 65;
+  // Препятствия размеры (оставил близко к твоим, но чуть аккуратнее)
+  const TARGET_BAB_HEIGHT  = 72;
+  const TARGET_CANE_HEIGHT = 70;
+  const TARGET_CART_HEIGHT = 66;
+  const TARGET_BOX_HEIGHT  = 58;
 
-  const MAX_BAB_WIDTH  = 75;
-  const MAX_CANE_WIDTH = 75;
-  const MAX_CART_WIDTH = 85;
-  const MAX_BOX_WIDTH  = 75;
+  const MAX_BAB_WIDTH  = 78;
+  const MAX_CANE_WIDTH = 78;
+  const MAX_CART_WIDTH = 92;
+  const MAX_BOX_WIDTH  = 78;
 
-  // Минимальный промежуток между препятствиями (адаптивный)
-  function minGapX(){
-    const speedRatio = worldSpeed / MAX_SPEED;
-    const baseGap = 280 - (speedRatio * 130);
-    const difficultyReduction = difficultyLevel * 0.5;
-    return Math.max(140, baseGap - difficultyReduction);
+  // Гэпы: “честно”, без невозможных серий
+  function minGapX() {
+    const t = worldSpeed / MAX_SPEED;     // 0..1
+    const base = 220 - t * 60;            // чем быстрее — тем меньше средний гэп
+    const diff = difficultyLevel * 1.2;   // чуть плотнее со временем
+    return Math.max(150, base - diff);
   }
 
   // ====== STATE ======
   let score = 0;
   let frozenScore = 0;
-  let spawnCooldown = 0;
-  let antiSpamMs = 0;
+  let spawnCooldown = 0;  // сек
+  let antiSpam = 0;       // сек
   const obstacles = [];
   let scrollBack = 0;
   let scrollFront = 0;
-  let lastObstacleFamily = null; // 'human' | 'box'
-  let gameTime = 0;
+  let lastObstacleFamily = null;
+
+  // Jump control
+  let jumpHeld = false;
+  let jumpedThisPress = false;
 
   // ====== UTILS ======
   function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
   function rand(min, max){ return Math.random() * (max - min) + min; }
-
   function aspectW(img, targetH){
     const a = img.width / img.height;
     return Math.round(targetH * a);
   }
-
   function aabb(a, b){
     return (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y);
   }
 
   function resetRun(){
     obstacles.length = 0;
-    worldSpeed = 2.8;
+
+    worldSpeed = 260;
     speedTimer = 0;
     difficultyLevel = 0;
-    gameTime = 0;
+
     score = 0;
     frozenScore = 0;
-    spawnCooldown = 650;
-    antiSpamMs = 0;
-    scrollBack = 0; scrollFront = 0;
-    player.y = GROUND_Y; player.vy = 0; player.onGround = true;
-    runFrame = 0; runTimer = 0;
+
+    spawnCooldown = 0.45; // быстрее стартуем
+    antiSpam = 0;
+
+    scrollBack = 0;
+    scrollFront = 0;
+
+    player.y = GROUND_Y;
+    player.vy = 0;
+    player.onGround = true;
+
+    runFrame = 0;
+    runTimer = 0;
+
     lastObstacleFamily = null;
-    isJumping = false;
+
+    jumpHeld = false;
+    jumpedThisPress = false;
   }
 
   function startGame(){
-    console.log('startGame вызвана, аудио разблокировано:', audioUnlocked);
-    
-    // Если аудио не разблокировано, показываем оверлей
-    if (!audioUnlocked) {
-      console.log('Показываем оверлей разблокировки аудио');
+    // если ни звук, ни “без звука” — блокируем через оверлей
+    if (!audioUnlocked && !allowNoAudio) {
       audioUnlockOverlay.style.display = 'flex';
       return;
     }
-    
-    console.log('Запускаем игру...');
+
     resetRun();
     scene = Scene.PLAY;
-    
-    // Запускаем музыку с небольшой задержкой
-    setTimeout(() => {
-      startMusic();
-    }, 100);
+
+    // музыка строго после user gesture — но если audioUnlocked true, уже можно
+    startMusic();
   }
 
   function goMenu(){
@@ -449,47 +400,51 @@ function startGameScript() {
     frozenScore = Math.floor(score);
     best = Math.max(best, frozenScore);
     localStorage.setItem('magnet_runner_best', String(best));
-    
+
     playSfx(sfxHit);
     stopMusic();
-    
+
     scene = Scene.GAMEOVER;
     player.vy = 0;
     player.onGround = true;
-    isJumping = false;
+
+    jumpHeld = false;
+    jumpedThisPress = false;
   }
 
-  function jump(){
+  function doJump(){
     if (scene !== Scene.PLAY) return;
-    if (player.onGround){
-      player.vy = JUMP_V;
-      player.onGround = false;
-      isJumping = true;
-      jumpStartTime = performance.now();
-      
-      playSfx(sfxJump);
+    if (!player.onGround) return;
+    player.onGround = false;
+    // вверх — отрицательная скорость по Y (так удобнее)
+    player.vy = -JUMP_V0;
+    playSfx(sfxJump);
+  }
+
+  function endJumpEarly(){
+    // “обрезаем” прыжок, если отпустили рано и ещё летим вверх
+    if (scene !== Scene.PLAY) return;
+    if (player.vy < 0) {
+      player.vy *= JUMP_CUT;
     }
   }
 
-  function endJump(){
-    isJumping = false;
-  }
-
-  // улучшенный canSpawnNow
   function canSpawnNow(){
     if (obstacles.length === 0) return true;
     const last = obstacles[obstacles.length - 1];
     const lastRight = last.x + last.w;
+    // спавним справа за экраном => чтобы на экране было расстояние
     return (W - lastRight) >= minGapX();
   }
 
   function chooseObstacleType(){
-    const speedRatio = worldSpeed / MAX_SPEED;
-    const boxChance = 0.4 + (speedRatio * 0.1);
+    const t = worldSpeed / MAX_SPEED;
+    const boxChance = 0.42 + t * 0.08;   // 0.42..0.50
     const wantBox = Math.random() < boxChance;
     let family = wantBox ? 'box' : 'human';
 
-    if (lastObstacleFamily && Math.random() < 0.6 && family === lastObstacleFamily) {
+    // лёгкое чередование, чтобы не было однотипной “полосы”
+    if (lastObstacleFamily && Math.random() < 0.62 && family === lastObstacleFamily) {
       family = (family === 'box') ? 'human' : 'box';
     }
     lastObstacleFamily = family;
@@ -497,48 +452,48 @@ function startGameScript() {
     if (family === 'box') return 'box';
 
     const r = Math.random();
-    const bab3Chance = 0.3 + (speedRatio * 0.2);
-    
-    if (r < (0.45 - speedRatio * 0.1)) return 'bab1';
-    if (r < (0.75 - speedRatio * 0.05)) return 'bab2';
-    return 'bab3';
+    // чем быстрее — тем чаще тележка
+    const cartBias = 0.18 + t * 0.20; // 0.18..0.38
+    if (r < 0.52 - t*0.08) return 'bab1';
+    if (r < 0.80 - t*0.04) return 'bab2';
+    return (Math.random() < cartBias) ? 'bab3' : 'bab2';
   }
 
   function spawnObstacle(){
     const type = chooseObstacleType();
+    let w=48, h=48;
 
-    let w=18, h=18;
     if (type === 'bab1') {
       h = TARGET_BAB_HEIGHT;
-      w = ready.b1 ? aspectW(bab1, h) : 65;
-      w = clamp(w, 40, MAX_BAB_WIDTH);
+      w = ready.b1 ? aspectW(bab1, h) : 64;
+      w = clamp(w, 42, MAX_BAB_WIDTH);
     } else if (type === 'bab2') {
       h = TARGET_CANE_HEIGHT;
-      w = ready.b2 ? aspectW(bab2, h) : 65;
-      w = clamp(w, 40, MAX_CANE_WIDTH);
+      w = ready.b2 ? aspectW(bab2, h) : 62;
+      w = clamp(w, 42, MAX_CANE_WIDTH);
     } else if (type === 'bab3') {
       h = TARGET_CART_HEIGHT;
-      w = ready.b3 ? aspectW(bab3, h) : 78;
-      w = clamp(w, 50, MAX_CART_WIDTH);
+      w = ready.b3 ? aspectW(bab3, h) : 80;
+      w = clamp(w, 54, MAX_CART_WIDTH);
     } else if (type === 'box') {
       h = TARGET_BOX_HEIGHT;
-      w = ready.box ? aspectW(boxImg, h) : 65;
-      w = clamp(w, 38, MAX_BOX_WIDTH);
+      w = ready.box ? aspectW(boxImg, h) : 60;
+      w = clamp(w, 40, MAX_BOX_WIDTH);
     }
 
     obstacles.push({
       type,
-      x: W + 12,
+      x: W + 16,
       y: GROUND_Y - h,
       w, h
     });
   }
 
   // ================= UI =================
-  function btnRectCentered(y, w=160, h=30){ return { x:(W - w)/2, y, w, h }; }
-  const btnMenuPlay = () => btnRectCentered(Math.round(HUD_H + 220), 170, 34);
-  const btnGoCont   = () => btnRectCentered(Math.round(HUD_H + 220), 190, 30);
-  const btnGoMenu   = () => btnRectCentered(Math.round(HUD_H + 258), 190, 30);
+  function btnRectCentered(y, w=180, h=34){ return { x:(W - w)/2, y, w, h }; }
+  const btnMenuPlay = () => btnRectCentered(Math.round(HUD_H + 225), 190, 38);
+  const btnGoCont   = () => btnRectCentered(Math.round(HUD_H + 230), 210, 34);
+  const btnGoMenu   = () => btnRectCentered(Math.round(HUD_H + 270), 210, 34);
 
   function pointInRect(px, py, r){ return px>=r.x && px<=r.x+r.w && py>=r.y && py<=r.y+r.h; }
   function toCanvasCoords(clientX, clientY){
@@ -549,104 +504,100 @@ function startGameScript() {
   function drawButton(r, label, fill, textColor){
     ctx.fillStyle = fill;
     ctx.beginPath();
-    ctx.roundRect(r.x, r.y, r.w, r.h, 6);
+    ctx.roundRect(r.x, r.y, r.w, r.h, 8);
     ctx.fill();
-    
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
     ctx.fillRect(r.x, r.y + r.h - 3, r.w, 3);
-    
-    ctx.fillStyle = textColor; 
+
+    ctx.fillStyle = textColor;
     ctx.font = 'bold 14px Arial, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(label, r.x + r.w/2, r.y + 20);
+    ctx.fillText(label, r.x + r.w/2, r.y + 23);
     ctx.textAlign = 'left';
   }
 
-  // ================= INPUT =================
-  // Обработчики для разблокировки аудио
-  console.log('Добавляем обработчик для кнопки разблокировки...');
-  unlockButton.addEventListener('click', function(e) {
-    console.log('Кнопка разблокировки нажата');
-    e.stopPropagation();
-    unlockAudio();
-  });
-  
-  // Также разблокируем по клику в любом месте оверлея
-  audioUnlockOverlay.addEventListener('click', function(e) {
-    console.log('Клик по оверлею аудио');
-    if (e.target === audioUnlockOverlay) {
-      unlockAudio();
-    }
-  });
-
-  // Обработчик для canvas
-  canvas.addEventListener('pointerdown', function(e) {
-    console.log('Клик по canvas, сцена:', scene);
-    
-    // Если аудио не разблокировано, показываем оверлей
-    if (!audioUnlocked) {
-      console.log('Аудио не разблокировано, показываем оверлей');
+  // ================= INPUT (10/10 совместимость) =================
+  function handleTap(clientX, clientY){
+    // если ещё не разблокировали звук — показываем оверлей и выходим
+    if (!audioUnlocked && !allowNoAudio) {
       audioUnlockOverlay.style.display = 'flex';
       return;
     }
-    
-    const p = toCanvasCoords(e.clientX, e.clientY);
 
-    if (scene === Scene.PLAY) { 
-      console.log('Прыжок в игре');
-      jump(); 
-      return; 
-    }
+    const p = toCanvasCoords(clientX, clientY);
+
+    if (scene === Scene.PLAY) { jumpHeld = true; if (!jumpedThisPress) { doJump(); jumpedThisPress = true; } return; }
 
     if (scene === Scene.MENU) {
-      console.log('Клик в меню');
       const b = btnMenuPlay();
-      if (pointInRect(p.x, p.y, b)) {
-        console.log('Нажата кнопка ИГРАТЬ');
-        startGame();
-      }
+      if (pointInRect(p.x, p.y, b)) startGame();
       return;
     }
 
     if (scene === Scene.GAMEOVER) {
-      console.log('Клик в gameover');
       const b1 = btnGoCont(), b2 = btnGoMenu();
       if (pointInRect(p.x, p.y, b1)) startGame();
       else if (pointInRect(p.x, p.y, b2)) goMenu();
     }
-  });
+  }
 
-  canvas.addEventListener('pointerup', () => {
-    if (isJumping) endJump();
-  });
+  function handleRelease(){
+    if (scene !== Scene.PLAY) return;
+    jumpHeld = false;
+    jumpedThisPress = false;
+    endJumpEarly();
+  }
 
+  // pointer
+  canvas.addEventListener('pointerdown', (e)=>{ e.preventDefault(); handleTap(e.clientX, e.clientY); }, { passive:false });
+  canvas.addEventListener('pointerup',   (e)=>{ e.preventDefault(); handleRelease(); }, { passive:false });
+  canvas.addEventListener('pointercancel', (e)=>{ e.preventDefault(); handleRelease(); }, { passive:false });
+
+  // touch fallback
+  canvas.addEventListener('touchstart', (e)=>{
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    handleTap(t.clientX, t.clientY);
+  }, { passive:false });
+
+  canvas.addEventListener('touchend', (e)=>{
+    e.preventDefault();
+    handleRelease();
+  }, { passive:false });
+
+  // mouse fallback
+  canvas.addEventListener('mousedown', (e)=>{ e.preventDefault(); handleTap(e.clientX, e.clientY); }, { passive:false });
+  window.addEventListener('mouseup', ()=>handleRelease());
+
+  // keyboard
   window.addEventListener('keydown', (e) => {
-    // Если аудио не разблокировано, показываем оверлей
-    if (!audioUnlocked) {
+    if (!audioUnlocked && !allowNoAudio) {
       audioUnlockOverlay.style.display = 'flex';
       return;
     }
-    
-    if (e.code === 'Space' || e.code === 'ArrowUp') { 
-      e.preventDefault(); 
-      if (scene === Scene.PLAY) jump();
+
+    if (e.code === 'Space' || e.code === 'ArrowUp') {
+      e.preventDefault();
+      if (scene === Scene.PLAY) { jumpHeld = true; if (!jumpedThisPress) { doJump(); jumpedThisPress = true; } }
       else if (scene === Scene.MENU) startGame();
     }
-    if (e.code === 'Enter') { 
-      if (scene === Scene.MENU) startGame(); 
-      else if (scene === Scene.GAMEOVER) startGame(); 
+    if (e.code === 'Enter') {
+      if (scene === Scene.MENU) startGame();
+      else if (scene === Scene.GAMEOVER) startGame();
     }
-    if (e.code === 'Escape') { 
-      if (scene === Scene.GAMEOVER) goMenu(); 
+    if (e.code === 'Escape') {
+      if (scene === Scene.GAMEOVER) goMenu();
       else if (scene === Scene.PLAY) goMenu();
     }
   }, { passive:false });
 
   window.addEventListener('keyup', (e) => {
-    if ((e.code === 'Space' || e.code === 'ArrowUp') && isJumping) {
-      endJump();
+    if (e.code === 'Space' || e.code === 'ArrowUp') {
+      e.preventDefault();
+      handleRelease();
     }
-  });
+  }, { passive:false });
 
   // ================= DRAW =================
   function drawTiledLayer(img, scrollX, drawY, drawH){
@@ -665,31 +616,29 @@ function startGameScript() {
 
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 16px monospace';
+
     const shownScore = (scene === Scene.GAMEOVER) ? frozenScore : Math.floor(score);
     ctx.fillText(`Счёт: ${shownScore}`, 14, 30);
     ctx.fillText(`Рекорд: ${best}`, W - 170, 30);
 
-    if (scene === Scene.PLAY) {
-      ctx.font = '10px monospace';
-      ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      const speedPercent = Math.round((worldSpeed / MAX_SPEED) * 100);
-      ctx.fillText(`Скорость: ${speedPercent}%`, 14, 76);
-      
-      const density = Math.round(100 - ((minGapX() - 140) / 140) * 100);
-      ctx.fillText(`Плотность: ${density}%`, W - 120, 76);
-    }
-
     ctx.font = '11px monospace';
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     ctx.fillText('МАГНИТ — КАССИР-РАННЕР', 14, 56);
+
+    if (scene === Scene.PLAY) {
+      ctx.font = '10px monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.70)';
+      const sp = Math.round((worldSpeed / MAX_SPEED) * 100);
+      ctx.fillText(`Скорость: ${sp}%`, 14, 76);
+    }
   }
 
   function drawBackgroundParallax(){
-    ctx.fillStyle = '#000'; 
+    ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
 
     if (!(ready.back && ready.front)) {
-      ctx.fillStyle = '#fff'; 
+      ctx.fillStyle = '#fff';
       ctx.font = '12px monospace';
       ctx.fillText('Загрузка...', 10, 24);
       drawHud();
@@ -730,15 +679,15 @@ function startGameScript() {
   }
 
   function drawMenuOverlay(){
-    ctx.fillStyle = 'rgba(0,0,0,0.70)'; 
+    ctx.fillStyle = 'rgba(0,0,0,0.70)';
     ctx.fillRect(0, 0, W, H);
-    
-    ctx.fillStyle = '#fff'; 
-    ctx.font = 'bold 20px monospace'; 
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 20px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('КАССИР-РАННЕР', W/2, HUD_H + 170);
-    
-    ctx.font = '13px monospace'; 
+
+    ctx.font = '13px monospace';
     ctx.fillStyle = 'rgba(255,255,255,0.90)';
     ctx.fillText('Прыгай через бабок и коробки', W/2, HUD_H + 195);
     ctx.textAlign = 'left';
@@ -747,188 +696,146 @@ function startGameScript() {
   }
 
   function drawGameOverOverlay(){
-    ctx.fillStyle = 'rgba(0,0,0,0.75)'; 
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
     ctx.fillRect(0, 0, W, H);
 
-    const cardW = 280, cardH = 180;
-    const cx = (W - cardW)/2, cy = HUD_H + 100;
+    const cardW = 280, cardH = 185;
+    const cx = (W - cardW)/2, cy = HUD_H + 95;
 
-    ctx.fillStyle = '#fff'; 
+    ctx.fillStyle = '#fff';
     ctx.beginPath();
     ctx.roundRect(cx, cy, cardW, cardH, 10);
     ctx.fill();
 
-    ctx.fillStyle = '#111'; 
-    ctx.font = 'bold 18px monospace'; 
+    ctx.fillStyle = '#111';
+    ctx.font = 'bold 18px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('ПРОДОЛЖИТЬ?', cx + cardW/2, cy + 34);
-    
-    ctx.font = '14px monospace'; 
-    ctx.textAlign = 'left';
-    ctx.fillText(`Счёт: ${frozenScore}`, cx + 20, cy + 70);
-    ctx.fillText(`Рекорд: ${best}`, cx + 20, cy + 94);
 
-    const finalSpeedPercent = Math.round((worldSpeed / MAX_SPEED) * 100);
-    ctx.fillText(`Скорость: ${finalSpeedPercent}%`, cx + 20, cy + 118);
+    ctx.font = '14px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Счёт: ${frozenScore}`, cx + 20, cy + 72);
+    ctx.fillText(`Рекорд: ${best}`, cx + 20, cy + 96);
+
+    const sp = Math.round((worldSpeed / MAX_SPEED) * 100);
+    ctx.fillText(`Скорость: ${sp}%`, cx + 20, cy + 120);
 
     drawButton(btnGoCont(), 'ПРОДОЛЖИТЬ', '#c81f2a', '#fff');
     drawButton(btnGoMenu(), 'В МЕНЮ', '#444', '#fff');
+
+    ctx.textAlign = 'left';
   }
 
   // ================= LOOP =================
   let last = performance.now();
+
   function tick(now){
-    const dt = Math.min(32, now - last);
+    const dtMs = Math.min(34, now - last);
     last = now;
 
-    const step = dt / 16.666;
+    const dt = dtMs / 1000; // секунды
 
     if (scene === Scene.PLAY) {
-      gameTime += dt;
-      
+      // скорость растёт предсказуемо
       speedTimer += dt;
-      if (speedTimer > SPEED_INCREASE_INTERVAL) {
-        speedTimer = 0;
-        
+      if (speedTimer >= SPEED_INCREASE_INTERVAL) {
+        speedTimer -= SPEED_INCREASE_INTERVAL;
         if (worldSpeed < MAX_SPEED) {
           worldSpeed = Math.min(MAX_SPEED, worldSpeed + SPEED_INCREMENT);
           difficultyLevel++;
         }
-        
-        if (Math.floor(difficultyLevel) % 3 === 0) {
-          ctx.fillStyle = 'rgba(200, 31, 42, 0.2)';
-          ctx.fillRect(0, 0, W, H);
-        }
       }
 
-      const scoreMultiplier = 1 + (worldSpeed - 2.8) / 3;
-      score += dt * 0.03 * scoreMultiplier;
+      // счёт чуть зависит от скорости (приятнее)
+      const scoreMul = 1 + (worldSpeed - 260) / 520;
+      score += dt * 120 * scoreMul;
 
-      const move = worldSpeed * step;
-      scrollBack  += move * 0.22;
-      scrollFront += move * 0.75;
+      // параллакс
+      const moveX = worldSpeed * dt;
+      scrollBack  += moveX * 0.22;
+      scrollFront += moveX * 0.75;
 
-      if (isJumping && (now - jumpStartTime) < JUMP_HOLD) {
-        player.vy = JUMP_V * 0.9;
-      } else {
-        player.vy += GRAVITY * step;
-        isJumping = false;
-      }
-      
-      player.y += player.vy * step;
-      if (player.y >= GROUND_Y) { 
-        player.y = GROUND_Y; 
-        player.vy = 0; 
-        player.onGround = true; 
-        isJumping = false;
+      // ====== физика прыжка (дуга) ======
+      // вверх отрицательно
+      player.vy += GRAVITY * dt;
+      player.y  += player.vy * dt;
+
+      if (player.y >= GROUND_Y) {
+        player.y = GROUND_Y;
+        player.vy = 0;
+        player.onGround = true;
       }
 
-      const adjustedRunFPS = RUN_FPS * (1 + (worldSpeed - 2.8) / 8);
+      // если держим прыжок — НЕ добавляем “плато”,
+      // но позволяем не резать скорость вверх. Если отпустил — endJumpEarly() уже обрежет.
+      // (jumpHeld здесь влияет только тем, что мы НЕ вызываем endJumpEarly автоматически)
+      // Реальный контроль — в endJumpEarly()
+
+      // анимация: чем быстрее — тем чуть быстрее бег
+      const runFps = RUN_FPS_BASE * (1 + (worldSpeed - 260) / 900);
       if (player.onGround) {
         runTimer += dt;
-        const frameMs = 1000 / adjustedRunFPS;
-        if (runTimer >= frameMs) { 
-          runTimer -= frameMs; 
-          runFrame = (runFrame + 1) % RUN_FRAMES; 
+        const frameSec = 1 / runFps;
+        if (runTimer >= frameSec) {
+          runTimer -= frameSec;
+          runFrame = (runFrame + 1) % RUN_FRAMES;
         }
       } else {
         runFrame = 1;
       }
 
+      // spawn
       spawnCooldown -= dt;
-      antiSpamMs -= dt;
+      antiSpam -= dt;
 
-      if (spawnCooldown <= 0 && antiSpamMs <= 0) {
+      if (spawnCooldown <= 0 && antiSpam <= 0) {
         if (canSpawnNow()) {
           spawnObstacle();
 
-          const speedRatio = worldSpeed / MAX_SPEED;
-          const antiSpamReduction = 600 * speedRatio;
-          antiSpamMs = Math.max(250, 800 - antiSpamReduction);
+          // анти-спам и кулдаун: гарантируем играбельность
+          const t = worldSpeed / MAX_SPEED;
+          antiSpam = Math.max(0.28, 0.78 - t * 0.40);
 
           const r = Math.random();
           let base;
-          
-          if (speedRatio < 0.3) {
-            if (r < 0.25) base = rand(700, 1000);
-            else if (r < 0.85) base = rand(1100, 1800);
-            else base = rand(1900, 3200);
-          } else if (speedRatio < 0.6) {
-            if (r < 0.35) base = rand(500, 800);
-            else if (r < 0.90) base = rand(900, 1500);
-            else base = rand(1600, 2500);
-          } else {
-            if (r < 0.45) base = rand(300, 600);
-            else if (r < 0.95) base = rand(700, 1200);
-            else base = rand(1300, 2000);
-          }
+          if (r < 0.22)      base = rand(0.55, 0.85); // близко, но реально
+          else if (r < 0.84) base = rand(0.85, 1.45); // обычно
+          else               base = rand(1.45, 2.25); // далеко
 
-          base += rand(-80, 80);
-          
-          const spawnReduction = 400 * speedRatio;
-          spawnCooldown = Math.max(300, base - spawnReduction);
+          // при высокой скорости — немного уменьшаем время, но не в “невозможно”
+          base = Math.max(0.50, base - (worldSpeed - 260) / 1200);
+
+          spawnCooldown = base;
         } else {
-          spawnCooldown = 80;
+          spawnCooldown = 0.08;
         }
       }
 
+      // движение + столкновения
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const o = obstacles[i];
-        o.x -= move;
+        o.x -= moveX;
 
-        const speedRatio = worldSpeed / MAX_SPEED;
-        const hitboxReduction = Math.min(0.1, speedRatio * 0.08);
-        
+        // Хитбокс игрока: компактный и “в центре”
         const pHit = {
-          x: player.x + Math.round(player.w * (0.32 - hitboxReduction)),
-          y: (player.y - player.h) + Math.round(player.h * (0.52 - hitboxReduction * 0.5)),
-          w: Math.round(player.w * (0.36 - hitboxReduction * 0.8)),
-          h: Math.round(player.h * (0.38 - hitboxReduction * 0.6))
+          x: player.x + player.w * 0.34,
+          y: (player.y - player.h) + player.h * 0.58,
+          w: player.w * 0.32,
+          h: player.h * 0.30
         };
 
+        // Хитбокс препятствий: мягкий
         let oHit;
-        const obstacleReduction = Math.min(8, difficultyLevel * 0.3);
-        
-        switch(o.type) {
-          case 'bab1':
-          case 'bab2':
-            oHit = { 
-              x: o.x + 12, 
-              y: o.y + 8, 
-              w: o.w - 24, 
-              h: o.h - 16 
-            };
-            break;
-          case 'bab3':
-            oHit = { 
-              x: o.x + 10, 
-              y: o.y + Math.round(o.h*0.32), 
-              w: o.w - 20, 
-              h: Math.round(o.h*0.56) 
-            };
-            break;
-          case 'box':
-            oHit = { 
-              x: o.x + 12, 
-              y: o.y + 10, 
-              w: o.w - 24, 
-              h: o.h - 18 
-            };
-            break;
-          default:
-            oHit = { 
-              x: o.x + 8, 
-              y: o.y + 8, 
-              w: o.w - 16, 
-              h: o.h - 16 
-            };
+        if (o.type === 'bab3') {
+          oHit = { x:o.x + 10, y:o.y + o.h*0.34, w:o.w - 20, h:o.h*0.56 };
+        } else if (o.type === 'box') {
+          oHit = { x:o.x + 12, y:o.y + 10, w:o.w - 24, h:o.h - 18 };
+        } else {
+          oHit = { x:o.x + 12, y:o.y + 8,  w:o.w - 24, h:o.h - 16 };
         }
 
-        if (aabb(pHit, oHit)) { 
-          die(); 
-          break; 
-        }
-        if (o.x + o.w < -80) obstacles.splice(i, 1);
+        if (aabb(pHit, oHit)) { die(); break; }
+        if (o.x + o.w < -100) obstacles.splice(i, 1);
       }
     }
 
@@ -941,24 +848,7 @@ function startGameScript() {
 
     requestAnimationFrame(tick);
   }
-  
-  // Добавляем поддержку roundRect для старых браузеров
-  if (!CanvasRenderingContext2D.prototype.roundRect) {
-    CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
-      if (w < 2 * r) r = w / 2;
-      if (h < 2 * r) r = h / 2;
-      this.beginPath();
-      this.moveTo(x + r, y);
-      this.arcTo(x + w, y, x + w, y + h, r);
-      this.arcTo(x + w, y + h, x, y + h, r);
-      this.arcTo(x, y + h, x, y, r);
-      this.arcTo(x, y, x + w, y, r);
-      this.closePath();
-      return this;
-    };
-  }
-  
-  console.log('Игра инициализирована, запускаем игровой цикл...');
+
   requestAnimationFrame(tick);
 }
 </script>
