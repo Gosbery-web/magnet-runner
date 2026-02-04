@@ -1,0 +1,723 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Магнит — кассир-раннер (вертикально)</title>
+  <style>
+    html, body { margin:0; height:100%; background:#0f0f10; overflow:hidden; }
+    body{
+      display:flex; align-items:center; justify-content:center;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    }
+
+    .wrap{
+      width: min(100vw, 460px);
+      height: 100vh;
+      position: relative;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+    canvas{
+      width: 100%;
+      height: auto;
+      aspect-ratio: 9 / 16;
+      max-height: calc(100vh - 20px);
+      display:block;
+      border-radius: 16px;
+      background:#000;
+      box-shadow: 0 18px 55px rgba(0,0,0,.45);
+      touch-action: manipulation;
+    }
+
+    .hint{
+      position:absolute;
+      left:16px; right:16px; bottom:14px;
+      color: rgba(255,255,255,.85);
+      font-size: 12px;
+      text-shadow: 0 1px 3px rgba(0,0,0,.65);
+      pointer-events:none;
+      user-select:none;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="c"></canvas>
+    <div class="hint">Тап/клик/пробел/↑ — прыжок. Enter — играть/продолжить. Esc — в меню (после смерти).</div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha:false });
+  ctx.imageSmoothingEnabled = false;
+
+  // ================= BASE RESOLUTION (вертикально) =================
+  const W = 360, H = 640;
+  canvas.width = W; canvas.height = H;
+
+  // ================= FILES (рядом с index.html) =================
+  const ASSET_BG_BACK   = 'bg_back.png';
+  const ASSET_BG_FRONT  = 'bg_front.png';
+  const ASSET_PLAYERRUN = 'cashier_run.png';
+  const ASSET_BAB1 = 'babushka.png';
+  const ASSET_BAB2 = 'babushka_cane.png';
+  const ASSET_BAB3 = 'babushka_cart.png';
+  const ASSET_BOX  = 'box.png';
+  const ASSET_MUSIC = 'music.mp3';
+  const ASSET_JUMP  = 'jump.wav';
+  const ASSET_HIT   = 'hit.wav';
+
+  // ================= AUDIO =================
+  const music = new Audio(ASSET_MUSIC); music.loop = true; music.volume = 0.30;
+  const sfxJump = new Audio(ASSET_JUMP); sfxJump.volume = 0.45;
+  const sfxHit  = new Audio(ASSET_HIT);  sfxHit.volume  = 0.65;
+
+  function playSfx(a){ try { a.currentTime = 0; a.play().catch(()=>{}); } catch {} }
+  function musicPlay(){ if (music.paused) music.play().catch(()=>{}); }
+  function musicStop(){ try { music.pause(); } catch {} }
+
+  // ================= IMAGES =================
+  const bgBack = new Image(); bgBack.src = ASSET_BG_BACK;
+  const bgFront = new Image(); bgFront.src = ASSET_BG_FRONT;
+  const cashierRun = new Image(); cashierRun.src = ASSET_PLAYERRUN;
+  const bab1 = new Image(); bab1.src = ASSET_BAB1;
+  const bab2 = new Image(); bab2.src = ASSET_BAB2;
+  const bab3 = new Image(); bab3.src = ASSET_BAB3;
+  const boxImg = new Image(); boxImg.src = ASSET_BOX;
+
+  const ready = { back:false, front:false, cashier:false, b1:false, b2:false, b3:false, box:false };
+  bgBack.onload = ()=> ready.back=true;
+  bgFront.onload = ()=> ready.front=true;
+  cashierRun.onload = ()=> ready.cashier=true;
+  bab1.onload = ()=> ready.b1=true;
+  bab2.onload = ()=> ready.b2=true;
+  bab3.onload = ()=> ready.b3=true;
+  boxImg.onload = ()=> ready.box=true;
+
+  // ================= GAME =================
+  const Scene = { MENU:'menu', PLAY:'play', GAMEOVER:'gameover' };
+  let scene = Scene.MENU;
+  let best = Number(localStorage.getItem('magnet_runner_best') || 0);
+
+  // ====== ВЕРТИКАЛЬНАЯ РАЗМЕТКА ======
+  const HUD_H   = 96;
+  const GAME_Y  = HUD_H;
+  const GAME_H  = H - HUD_H;
+  const GROUND_Y = H - 34;
+
+  // ====== УЛУЧШЕННАЯ ФИЗИКА ======
+  const GRAVITY  = 0.78;
+  const JUMP_V   = -12.0;
+  const JUMP_HOLD = 200;
+
+  // скорость и сложность
+  let worldSpeed = 2.8;
+  let speedTimer = 0;
+  let difficultyLevel = 0;
+  const MAX_SPEED = 7.5;
+  const SPEED_INCREASE_INTERVAL = 1200;
+  const SPEED_INCREMENT = 0.08;
+  
+  let jumpStartTime = 0;
+  let isJumping = false;
+
+  // Кассирша
+  const player = { x:70, y:GROUND_Y, w:72, h:100, vy:0, onGround:true };
+
+  // Анимация бега
+  const RUN_FRAMES = 4, RUN_FPS = 14;
+  let runFrame = 0, runTimer = 0;
+
+  // Препятствия размеры
+  const TARGET_BAB_HEIGHT  = 75;
+  const TARGET_CANE_HEIGHT = 72;
+  const TARGET_CART_HEIGHT = 68;
+  const TARGET_BOX_HEIGHT  = 65;
+
+  const MAX_BAB_WIDTH  = 75;
+  const MAX_CANE_WIDTH = 75;
+  const MAX_CART_WIDTH = 85;
+  const MAX_BOX_WIDTH  = 75;
+
+  // Минимальный промежуток между препятствиями (адаптивный)
+  function minGapX(){
+    // На низких скоростях - большие промежутки, на высоких - маленькие
+    const speedRatio = worldSpeed / MAX_SPEED;
+    
+    // Динамический расчет: от 280px на старте до 150px на максимальной скорости
+    const baseGap = 280 - (speedRatio * 130);
+    
+    // Дополнительно учитываем сложность
+    const difficultyReduction = difficultyLevel * 0.5;
+    
+    return Math.max(140, baseGap - difficultyReduction);
+  }
+
+  // ====== STATE ======
+  let score = 0;
+  let frozenScore = 0;
+  let spawnCooldown = 0;
+  let antiSpamMs = 0;
+  const obstacles = [];
+  let scrollBack = 0;
+  let scrollFront = 0;
+  let lastObstacleFamily = null; // 'human' | 'box'
+  let gameTime = 0;
+
+  // ====== UTILS ======
+  function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
+  function rand(min, max){ return Math.random() * (max - min) + min; }
+
+  function aspectW(img, targetH){
+    const a = img.width / img.height;
+    return Math.round(targetH * a);
+  }
+
+  function aabb(a, b){
+    return (a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y);
+  }
+
+  function resetRun(){
+    obstacles.length = 0;
+    worldSpeed = 2.8;
+    speedTimer = 0;
+    difficultyLevel = 0;
+    gameTime = 0;
+    score = 0;
+    frozenScore = 0;
+    spawnCooldown = 650;
+    antiSpamMs = 0;
+    scrollBack = 0; scrollFront = 0;
+    player.y = GROUND_Y; player.vy = 0; player.onGround = true;
+    runFrame = 0; runTimer = 0;
+    lastObstacleFamily = null;
+    isJumping = false;
+  }
+
+  function startGame(){
+    resetRun();
+    scene = Scene.PLAY;
+    music.currentTime = 0;
+    musicPlay();
+  }
+
+  function goMenu(){
+    scene = Scene.MENU;
+    resetRun();
+    musicStop();
+  }
+
+  function die(){
+    frozenScore = Math.floor(score);
+    best = Math.max(best, frozenScore);
+    localStorage.setItem('magnet_runner_best', String(best));
+    playSfx(sfxHit);
+    musicStop();
+    scene = Scene.GAMEOVER;
+    player.vy = 0;
+    player.onGround = true;
+    isJumping = false;
+  }
+
+  function jump(){
+    if (scene !== Scene.PLAY) return;
+    if (player.onGround){
+      player.vy = JUMP_V;
+      player.onGround = false;
+      isJumping = true;
+      jumpStartTime = performance.now();
+      playSfx(sfxJump);
+    }
+  }
+
+  function endJump(){
+    isJumping = false;
+  }
+
+  // улучшенный canSpawnNow
+  function canSpawnNow(){
+    if (obstacles.length === 0) return true;
+    const last = obstacles[obstacles.length - 1];
+    const lastRight = last.x + last.w;
+    return (W - lastRight) >= minGapX();
+  }
+
+  function chooseObstacleType(){
+    // С ростом сложности появляется больше препятствий
+    const speedRatio = worldSpeed / MAX_SPEED;
+    const boxChance = 0.4 + (speedRatio * 0.1); // Больше коробок на высокой скорости
+    const wantBox = Math.random() < boxChance;
+    let family = wantBox ? 'box' : 'human';
+
+    if (lastObstacleFamily && Math.random() < 0.6 && family === lastObstacleFamily) {
+      family = (family === 'box') ? 'human' : 'box';
+    }
+    lastObstacleFamily = family;
+
+    if (family === 'box') return 'box';
+
+    // На высокой скорости больше сложных препятствий
+    const r = Math.random();
+    const bab3Chance = 0.3 + (speedRatio * 0.2); // Значительно увеличиваем шанс бабушек с тележками
+    
+    if (r < (0.45 - speedRatio * 0.1)) return 'bab1'; // Меньше простых бабушек
+    if (r < (0.75 - speedRatio * 0.05)) return 'bab2'; // Чуть меньше средних
+    return 'bab3'; // Больше сложных
+  }
+
+  function spawnObstacle(){
+    const type = chooseObstacleType();
+
+    let w=18, h=18;
+    if (type === 'bab1') {
+      h = TARGET_BAB_HEIGHT;
+      w = ready.b1 ? aspectW(bab1, h) : 65;
+      w = clamp(w, 40, MAX_BAB_WIDTH);
+    } else if (type === 'bab2') {
+      h = TARGET_CANE_HEIGHT;
+      w = ready.b2 ? aspectW(bab2, h) : 65;
+      w = clamp(w, 40, MAX_CANE_WIDTH);
+    } else if (type === 'bab3') {
+      h = TARGET_CART_HEIGHT;
+      w = ready.b3 ? aspectW(bab3, h) : 78;
+      w = clamp(w, 50, MAX_CART_WIDTH);
+    } else if (type === 'box') {
+      h = TARGET_BOX_HEIGHT;
+      w = ready.box ? aspectW(boxImg, h) : 65;
+      w = clamp(w, 38, MAX_BOX_WIDTH);
+    }
+
+    obstacles.push({
+      type,
+      x: W + 12,
+      y: GROUND_Y - h,
+      w, h
+    });
+  }
+
+  // ================= UI =================
+  function btnRectCentered(y, w=160, h=30){ return { x:(W - w)/2, y, w, h }; }
+  const btnMenuPlay = () => btnRectCentered(Math.round(HUD_H + 220), 170, 34);
+  const btnGoCont   = () => btnRectCentered(Math.round(HUD_H + 220), 190, 30);
+  const btnGoMenu   = () => btnRectCentered(Math.round(HUD_H + 258), 190, 30);
+
+  function pointInRect(px, py, r){ return px>=r.x && px<=r.x+r.w && py>=r.y && py<=r.y+r.h; }
+  function toCanvasCoords(clientX, clientY){
+    const rect = canvas.getBoundingClientRect();
+    return { x:(clientX-rect.left)/rect.width*W, y:(clientY-rect.top)/rect.height*H };
+  }
+
+  function drawButton(r, label, fill, textColor){
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.roundRect(r.x, r.y, r.w, r.h, 6);
+    ctx.fill();
+    
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(r.x, r.y + r.h - 3, r.w, 3);
+    
+    ctx.fillStyle = textColor; 
+    ctx.font = 'bold 14px Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, r.x + r.w/2, r.y + 20);
+    ctx.textAlign = 'left';
+  }
+
+  // ================= INPUT =================
+  canvas.addEventListener('pointerdown', (e) => {
+    const p = toCanvasCoords(e.clientX, e.clientY);
+
+    if (scene === Scene.PLAY) { jump(); return; }
+
+    if (scene === Scene.MENU) {
+      const b = btnMenuPlay();
+      if (pointInRect(p.x, p.y, b)) startGame();
+      return;
+    }
+
+    if (scene === Scene.GAMEOVER) {
+      const b1 = btnGoCont(), b2 = btnGoMenu();
+      if (pointInRect(p.x, p.y, b1)) startGame();
+      else if (pointInRect(p.x, p.y, b2)) goMenu();
+    }
+  });
+
+  canvas.addEventListener('pointerup', () => {
+    if (isJumping) endJump();
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' || e.code === 'ArrowUp') { 
+      e.preventDefault(); 
+      if (scene === Scene.PLAY) jump();
+      else if (scene === Scene.MENU) startGame();
+    }
+    if (e.code === 'Enter') { 
+      if (scene === Scene.MENU) startGame(); 
+      else if (scene === Scene.GAMEOVER) startGame(); 
+    }
+    if (e.code === 'Escape') { 
+      if (scene === Scene.GAMEOVER) goMenu(); 
+      else if (scene === Scene.PLAY) goMenu();
+    }
+  }, { passive:false });
+
+  window.addEventListener('keyup', (e) => {
+    if ((e.code === 'Space' || e.code === 'ArrowUp') && isJumping) {
+      endJump();
+    }
+  });
+
+  // ================= DRAW =================
+  function drawTiledLayer(img, scrollX, drawY, drawH){
+    const scale = drawH / img.height;
+    const tileW = Math.ceil(img.width * scale);
+    let x = -(scrollX % tileW);
+    for (; x < W; x += tileW) ctx.drawImage(img, x, drawY, tileW, drawH);
+  }
+
+  function drawHud(){
+    ctx.fillStyle = '#0b0b0c';
+    ctx.fillRect(0, 0, W, HUD_H);
+
+    ctx.fillStyle = '#c81f2a';
+    ctx.fillRect(0, HUD_H - 18, W, 18);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px monospace';
+    const shownScore = (scene === Scene.GAMEOVER) ? frozenScore : Math.floor(score);
+    ctx.fillText(`Счёт: ${shownScore}`, 14, 30);
+    ctx.fillText(`Рекорд: ${best}`, W - 170, 30);
+
+    // Отображаем уровень сложности
+    if (scene === Scene.PLAY) {
+      ctx.font = '10px monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      const speedPercent = Math.round((worldSpeed / MAX_SPEED) * 100);
+      ctx.fillText(`Скорость: ${speedPercent}%`, 14, 76);
+      
+      // Показываем плотность препятствий
+      const density = Math.round(100 - ((minGapX() - 140) / 140) * 100);
+      ctx.fillText(`Плотность: ${density}%`, W - 120, 76);
+    }
+
+    ctx.font = '11px monospace';
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillText('МАГНИТ — КАССИР-РАННЕР', 14, 56);
+  }
+
+  function drawBackgroundParallax(){
+    ctx.fillStyle = '#000'; 
+    ctx.fillRect(0, 0, W, H);
+
+    if (!(ready.back && ready.front)) {
+      ctx.fillStyle = '#fff'; 
+      ctx.font = '12px monospace';
+      ctx.fillText('Загрузка...', 10, 24);
+      drawHud();
+      return;
+    }
+
+    drawTiledLayer(bgBack,  scrollBack,  GAME_Y, GAME_H);
+    drawTiledLayer(bgFront, scrollFront, GAME_Y, GAME_H);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(0, GAME_Y, W, 10);
+
+    drawHud();
+  }
+
+  function drawPlayer(){
+    const px = Math.round(player.x);
+    const py = Math.round(player.y - player.h);
+
+    if (ready.cashier) {
+      const fw = Math.floor(cashierRun.width / RUN_FRAMES);
+      const fh = cashierRun.height;
+      const sx = runFrame * fw;
+      ctx.drawImage(cashierRun, sx, 0, fw, fh, px, py, player.w, player.h);
+    } else {
+      ctx.fillStyle = '#c81f2a';
+      ctx.fillRect(px, py, player.w, player.h);
+    }
+  }
+
+  function drawObstacle(o){
+    const x = Math.round(o.x), y = Math.round(o.y), w = Math.round(o.w), h = Math.round(o.h);
+    if (o.type === 'bab1' && ready.b1) ctx.drawImage(bab1, x, y, w, h);
+    else if (o.type === 'bab2' && ready.b2) ctx.drawImage(bab2, x, y, w, h);
+    else if (o.type === 'bab3' && ready.b3) ctx.drawImage(bab3, x, y, w, h);
+    else if (o.type === 'box' && ready.box) ctx.drawImage(boxImg, x, y, w, h);
+    else { ctx.fillStyle = '#2d9cdb'; ctx.fillRect(x, y, w, h); }
+  }
+
+  function drawMenuOverlay(){
+    ctx.fillStyle = 'rgba(0,0,0,0.70)'; 
+    ctx.fillRect(0, 0, W, H);
+    
+    ctx.fillStyle = '#fff'; 
+    ctx.font = 'bold 20px monospace'; 
+    ctx.textAlign = 'center';
+    ctx.fillText('КАССИР-РАННЕР', W/2, HUD_H + 170);
+    
+    ctx.font = '13px monospace'; 
+    ctx.fillStyle = 'rgba(255,255,255,0.90)';
+    ctx.fillText('Прыгай через бабок и коробки', W/2, HUD_H + 195);
+    ctx.textAlign = 'left';
+
+    drawButton(btnMenuPlay(), 'ИГРАТЬ', '#c81f2a', '#fff');
+
+    ctx.fillStyle = 'rgba(255,255,255,0.85)'; 
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Enter или Space — играть', W/2, HUD_H + 270);
+    ctx.textAlign = 'left';
+  }
+
+  function drawGameOverOverlay(){
+    ctx.fillStyle = 'rgba(0,0,0,0.75)'; 
+    ctx.fillRect(0, 0, W, H);
+
+    const cardW = 280, cardH = 180;
+    const cx = (W - cardW)/2, cy = HUD_H + 100;
+
+    ctx.fillStyle = '#fff'; 
+    ctx.beginPath();
+    ctx.roundRect(cx, cy, cardW, cardH, 10);
+    ctx.fill();
+
+    ctx.fillStyle = '#111'; 
+    ctx.font = 'bold 18px monospace'; 
+    ctx.textAlign = 'center';
+    ctx.fillText('ПРОДОЛЖИТЬ?', cx + cardW/2, cy + 34);
+    
+    ctx.font = '14px monospace'; 
+    ctx.textAlign = 'left';
+    ctx.fillText(`Счёт: ${frozenScore}`, cx + 20, cy + 70);
+    ctx.fillText(`Рекорд: ${best}`, cx + 20, cy + 94);
+
+    // Показываем достигнутую скорость
+    const finalSpeedPercent = Math.round((worldSpeed / MAX_SPEED) * 100);
+    ctx.fillText(`Скорость: ${finalSpeedPercent}%`, cx + 20, cy + 118);
+
+    drawButton(btnGoCont(), 'ПРОДОЛЖИТЬ', '#c81f2a', '#fff');
+    drawButton(btnGoMenu(), 'В МЕНЮ', '#444', '#fff');
+
+    ctx.fillStyle = '#666'; 
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('Enter — продолжить, Esc — меню', cx + cardW/2, cy + 156);
+    ctx.textAlign = 'left';
+  }
+
+  // ================= LOOP =================
+  let last = performance.now();
+  function tick(now){
+    const dt = Math.min(32, now - last);
+    last = now;
+
+    const step = dt / 16.666;
+
+    if (scene === Scene.PLAY) {
+      // Увеличиваем общее время игры
+      gameTime += dt;
+      
+      // Постепенное увеличение скорости и сложности
+      speedTimer += dt;
+      if (speedTimer > SPEED_INCREASE_INTERVAL) {
+        speedTimer = 0;
+        
+        // Увеличиваем скорость
+        if (worldSpeed < MAX_SPEED) {
+          worldSpeed = Math.min(MAX_SPEED, worldSpeed + SPEED_INCREMENT);
+          difficultyLevel++;
+        }
+        
+        // Показываем визуальный эффект ускорения
+        if (Math.floor(difficultyLevel) % 3 === 0) {
+          ctx.fillStyle = 'rgba(200, 31, 42, 0.2)';
+          ctx.fillRect(0, 0, W, H);
+        }
+      }
+
+      // Более агрессивный рост счета на высоких скоростях
+      const scoreMultiplier = 1 + (worldSpeed - 2.8) / 3;
+      score += dt * 0.03 * scoreMultiplier;
+
+      const move = worldSpeed * step;
+      scrollBack  += move * 0.22;
+      scrollFront += move * 0.75;
+
+      // Физика с поддержкой удержания прыжка
+      if (isJumping && (now - jumpStartTime) < JUMP_HOLD) {
+        player.vy = JUMP_V * 0.9;
+      } else {
+        player.vy += GRAVITY * step;
+        isJumping = false;
+      }
+      
+      player.y += player.vy * step;
+      if (player.y >= GROUND_Y) { 
+        player.y = GROUND_Y; 
+        player.vy = 0; 
+        player.onGround = true; 
+        isJumping = false;
+      }
+
+      // Анимация (ускоряется с ростом скорости)
+      const adjustedRunFPS = RUN_FPS * (1 + (worldSpeed - 2.8) / 8);
+      if (player.onGround) {
+        runTimer += dt;
+        const frameMs = 1000 / adjustedRunFPS;
+        if (runTimer >= frameMs) { 
+          runTimer -= frameMs; 
+          runFrame = (runFrame + 1) % RUN_FRAMES; 
+        }
+      } else {
+        runFrame = 1;
+      }
+
+      // Спавн препятствий (АКТИВНО увеличиваем частоту с ростом скорости)
+      spawnCooldown -= dt;
+      antiSpamMs -= dt;
+
+      if (spawnCooldown <= 0 && antiSpamMs <= 0) {
+        if (canSpawnNow()) {
+          spawnObstacle();
+
+          // СУЩЕСТВЕННО уменьшаем защитный интервал с ростом скорости
+          const speedRatio = worldSpeed / MAX_SPEED;
+          const antiSpamReduction = 600 * speedRatio; // Сильное уменьшение
+          antiSpamMs = Math.max(250, 800 - antiSpamReduction);
+
+          const r = Math.random();
+          let base;
+          
+          // На высокой скорости - чаще препятствия
+          if (speedRatio < 0.3) {
+            // Начальный уровень: нормальные промежутки
+            if (r < 0.25) base = rand(700, 1000);
+            else if (r < 0.85) base = rand(1100, 1800);
+            else base = rand(1900, 3200);
+          } else if (speedRatio < 0.6) {
+            // Средний уровень: чаще
+            if (r < 0.35) base = rand(500, 800);
+            else if (r < 0.90) base = rand(900, 1500);
+            else base = rand(1600, 2500);
+          } else {
+            // Высокий уровень: очень часто
+            if (r < 0.45) base = rand(300, 600);
+            else if (r < 0.95) base = rand(700, 1200);
+            else base = rand(1300, 2000);
+          }
+
+          base += rand(-80, 80);
+          
+          // СИЛЬНОЕ уменьшение задержки между спавном
+          const spawnReduction = 400 * speedRatio;
+          spawnCooldown = Math.max(300, base - spawnReduction);
+        } else {
+          spawnCooldown = 80; // Очень маленькая задержка при невозможности спавна
+        }
+      }
+
+      // Движение и столкновения
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        const o = obstacles[i];
+        o.x -= move;
+
+        // Хитбоксы (чуть более лояльные на высокой скорости для баланса)
+        const speedRatio = worldSpeed / MAX_SPEED;
+        const hitboxReduction = Math.min(0.1, speedRatio * 0.08); // Меньшее уменьшение
+        
+        const pHit = {
+          x: player.x + Math.round(player.w * (0.32 - hitboxReduction)),
+          y: (player.y - player.h) + Math.round(player.h * (0.52 - hitboxReduction * 0.5)),
+          w: Math.round(player.w * (0.36 - hitboxReduction * 0.8)),
+          h: Math.round(player.h * (0.38 - hitboxReduction * 0.6))
+        };
+
+        let oHit;
+        const obstacleReduction = Math.min(8, difficultyLevel * 0.3); // Меньшее увеличение хитбоксов
+        
+        switch(o.type) {
+          case 'bab1':
+          case 'bab2':
+            oHit = { 
+              x: o.x + 12, 
+              y: o.y + 8, 
+              w: o.w - 24, 
+              h: o.h - 16 
+            };
+            break;
+          case 'bab3':
+            oHit = { 
+              x: o.x + 10, 
+              y: o.y + Math.round(o.h*0.32), 
+              w: o.w - 20, 
+              h: Math.round(o.h*0.56) 
+            };
+            break;
+          case 'box':
+            oHit = { 
+              x: o.x + 12, 
+              y: o.y + 10, 
+              w: o.w - 24, 
+              h: o.h - 18 
+            };
+            break;
+          default:
+            oHit = { 
+              x: o.x + 8, 
+              y: o.y + 8, 
+              w: o.w - 16, 
+              h: o.h - 16 
+            };
+        }
+
+        if (aabb(pHit, oHit)) { 
+          die(); 
+          break; 
+        }
+        if (o.x + o.w < -80) obstacles.splice(i, 1);
+      }
+    }
+
+    drawBackgroundParallax();
+    for (const o of obstacles) drawObstacle(o);
+    drawPlayer();
+
+    if (scene === Scene.MENU) drawMenuOverlay();
+    if (scene === Scene.GAMEOVER) drawGameOverOverlay();
+
+    requestAnimationFrame(tick);
+  }
+  
+  // Добавляем поддержку roundRect для старых браузеров
+  if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+      if (w < 2 * r) r = w / 2;
+      if (h < 2 * r) r = h / 2;
+      this.beginPath();
+      this.moveTo(x + r, y);
+      this.arcTo(x + w, y, x + w, y + h, r);
+      this.arcTo(x + w, y + h, x, y + h, r);
+      this.arcTo(x, y + h, x, y, r);
+      this.arcTo(x, y, x + w, y, r);
+      this.closePath();
+      return this;
+    };
+  }
+  
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
