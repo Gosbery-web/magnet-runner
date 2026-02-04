@@ -33,23 +33,11 @@
       box-shadow: 0 18px 55px rgba(0,0,0,.45);
       touch-action: manipulation;
     }
-
-    .hint{
-      position:absolute;
-      left:16px; right:16px; bottom:14px;
-      color: rgba(255,255,255,.85);
-      font-size: 12px;
-      text-shadow: 0 1px 3px rgba(0,0,0,.65);
-      pointer-events:none;
-      user-select:none;
-      text-align: center;
-    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <canvas id="c"></canvas>
-    <div class="hint">Тап/клик/пробел/↑ — прыжок. Enter — играть/продолжить. Esc — в меню (после смерти).</div>
   </div>
 
 <script>
@@ -74,14 +62,65 @@
   const ASSET_JUMP  = 'jump.wav';
   const ASSET_HIT   = 'hit.wav';
 
-  // ================= AUDIO =================
-  const music = new Audio(ASSET_MUSIC); music.loop = true; music.volume = 0.30;
-  const sfxJump = new Audio(ASSET_JUMP); sfxJump.volume = 0.45;
-  const sfxHit  = new Audio(ASSET_HIT);  sfxHit.volume  = 0.65;
+  // ================= АУДИО И РАЗБЛОКИРОВКА =================
+  const music = new Audio(ASSET_MUSIC); 
+  music.loop = true; 
+  music.volume = 0.30;
+  music.preload = 'auto'; // Предзагрузка
+  
+  const sfxJump = new Audio(ASSET_JUMP); 
+  sfxJump.volume = 0.45;
+  sfxJump.preload = 'auto';
+  
+  const sfxHit  = new Audio(ASSET_HIT);  
+  sfxHit.volume  = 0.65;
+  sfxHit.preload = 'auto';
 
-  function playSfx(a){ try { a.currentTime = 0; a.play().catch(()=>{}); } catch {} }
-  function musicPlay(){ if (music.paused) music.play().catch(()=>{}); }
-  function musicStop(){ try { music.pause(); } catch {} }
+  let audioUnlocked = false; // Флаг разблокировки аудио
+
+  function unlockAudio(){
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+
+    // Разблокируем все аудио элементы
+    music.currentTime = 0;
+    music.play().catch(e => console.log('Music play error:', e));
+    
+    // Также "разогреваем" звуковые эффекты
+    sfxJump.currentTime = 0;
+    sfxJump.volume = 0;
+    sfxJump.play().then(() => {
+      sfxJump.pause();
+      sfxJump.currentTime = 0;
+      sfxJump.volume = 0.45;
+    }).catch(() => {});
+    
+    sfxHit.currentTime = 0;
+    sfxHit.volume = 0;
+    sfxHit.play().then(() => {
+      sfxHit.pause();
+      sfxHit.currentTime = 0;
+      sfxHit.volume = 0.65;
+    }).catch(() => {});
+  }
+
+  function playSfx(a){ 
+    if (!audioUnlocked) return; // Не проигрываем звуки до разблокировки
+    
+    try { 
+      a.currentTime = 0; 
+      a.play().catch(()=>{}); 
+    } catch {} 
+  }
+  
+  function musicPlay(){ 
+    if (!audioUnlocked) return; // Не включаем музыку до разблокировки
+    if (music.paused) music.play().catch(()=>{}); 
+  }
+  
+  function musicStop(){ 
+    try { music.pause(); } catch {} 
+  }
 
   // ================= IMAGES =================
   const bgBack = new Image(); bgBack.src = ASSET_BG_BACK;
@@ -148,15 +187,9 @@
 
   // Минимальный промежуток между препятствиями (адаптивный)
   function minGapX(){
-    // На низких скоростях - большие промежутки, на высоких - маленькие
     const speedRatio = worldSpeed / MAX_SPEED;
-    
-    // Динамический расчет: от 280px на старте до 150px на максимальной скорости
     const baseGap = 280 - (speedRatio * 130);
-    
-    // Дополнительно учитываем сложность
     const difficultyReduction = difficultyLevel * 0.5;
-    
     return Math.max(140, baseGap - difficultyReduction);
   }
 
@@ -250,9 +283,8 @@
   }
 
   function chooseObstacleType(){
-    // С ростом сложности появляется больше препятствий
     const speedRatio = worldSpeed / MAX_SPEED;
-    const boxChance = 0.4 + (speedRatio * 0.1); // Больше коробок на высокой скорости
+    const boxChance = 0.4 + (speedRatio * 0.1);
     const wantBox = Math.random() < boxChance;
     let family = wantBox ? 'box' : 'human';
 
@@ -263,13 +295,12 @@
 
     if (family === 'box') return 'box';
 
-    // На высокой скорости больше сложных препятствий
     const r = Math.random();
-    const bab3Chance = 0.3 + (speedRatio * 0.2); // Значительно увеличиваем шанс бабушек с тележками
+    const bab3Chance = 0.3 + (speedRatio * 0.2);
     
-    if (r < (0.45 - speedRatio * 0.1)) return 'bab1'; // Меньше простых бабушек
-    if (r < (0.75 - speedRatio * 0.05)) return 'bab2'; // Чуть меньше средних
-    return 'bab3'; // Больше сложных
+    if (r < (0.45 - speedRatio * 0.1)) return 'bab1';
+    if (r < (0.75 - speedRatio * 0.05)) return 'bab2';
+    return 'bab3';
   }
 
   function spawnObstacle(){
@@ -332,6 +363,9 @@
 
   // ================= INPUT =================
   canvas.addEventListener('pointerdown', (e) => {
+    // РАЗБЛОКИРОВКА АУДИО ПРИ ПЕРВОМ ТАПЕ
+    unlockAudio();
+    
     const p = toCanvasCoords(e.clientX, e.clientY);
 
     if (scene === Scene.PLAY) { jump(); return; }
@@ -354,6 +388,9 @@
   });
 
   window.addEventListener('keydown', (e) => {
+    // РАЗБЛОКИРОВКА АУДИО ПРИ ПЕРВОМ НАЖАТИИ КЛАВИШИ
+    unlockAudio();
+    
     if (e.code === 'Space' || e.code === 'ArrowUp') { 
       e.preventDefault(); 
       if (scene === Scene.PLAY) jump();
@@ -396,14 +433,12 @@
     ctx.fillText(`Счёт: ${shownScore}`, 14, 30);
     ctx.fillText(`Рекорд: ${best}`, W - 170, 30);
 
-    // Отображаем уровень сложности
     if (scene === Scene.PLAY) {
       ctx.font = '10px monospace';
       ctx.fillStyle = 'rgba(255,255,255,0.7)';
       const speedPercent = Math.round((worldSpeed / MAX_SPEED) * 100);
       ctx.fillText(`Скорость: ${speedPercent}%`, 14, 76);
       
-      // Показываем плотность препятствий
       const density = Math.round(100 - ((minGapX() - 140) / 140) * 100);
       ctx.fillText(`Плотность: ${density}%`, W - 120, 76);
     }
@@ -473,12 +508,6 @@
     ctx.textAlign = 'left';
 
     drawButton(btnMenuPlay(), 'ИГРАТЬ', '#c81f2a', '#fff');
-
-    ctx.fillStyle = 'rgba(255,255,255,0.85)'; 
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('Enter или Space — играть', W/2, HUD_H + 270);
-    ctx.textAlign = 'left';
   }
 
   function drawGameOverOverlay(){
@@ -503,18 +532,11 @@
     ctx.fillText(`Счёт: ${frozenScore}`, cx + 20, cy + 70);
     ctx.fillText(`Рекорд: ${best}`, cx + 20, cy + 94);
 
-    // Показываем достигнутую скорость
     const finalSpeedPercent = Math.round((worldSpeed / MAX_SPEED) * 100);
     ctx.fillText(`Скорость: ${finalSpeedPercent}%`, cx + 20, cy + 118);
 
     drawButton(btnGoCont(), 'ПРОДОЛЖИТЬ', '#c81f2a', '#fff');
     drawButton(btnGoMenu(), 'В МЕНЮ', '#444', '#fff');
-
-    ctx.fillStyle = '#666'; 
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('Enter — продолжить, Esc — меню', cx + cardW/2, cy + 156);
-    ctx.textAlign = 'left';
   }
 
   // ================= LOOP =================
@@ -526,28 +548,23 @@
     const step = dt / 16.666;
 
     if (scene === Scene.PLAY) {
-      // Увеличиваем общее время игры
       gameTime += dt;
       
-      // Постепенное увеличение скорости и сложности
       speedTimer += dt;
       if (speedTimer > SPEED_INCREASE_INTERVAL) {
         speedTimer = 0;
         
-        // Увеличиваем скорость
         if (worldSpeed < MAX_SPEED) {
           worldSpeed = Math.min(MAX_SPEED, worldSpeed + SPEED_INCREMENT);
           difficultyLevel++;
         }
         
-        // Показываем визуальный эффект ускорения
         if (Math.floor(difficultyLevel) % 3 === 0) {
           ctx.fillStyle = 'rgba(200, 31, 42, 0.2)';
           ctx.fillRect(0, 0, W, H);
         }
       }
 
-      // Более агрессивный рост счета на высоких скоростях
       const scoreMultiplier = 1 + (worldSpeed - 2.8) / 3;
       score += dt * 0.03 * scoreMultiplier;
 
@@ -555,7 +572,6 @@
       scrollBack  += move * 0.22;
       scrollFront += move * 0.75;
 
-      // Физика с поддержкой удержания прыжка
       if (isJumping && (now - jumpStartTime) < JUMP_HOLD) {
         player.vy = JUMP_V * 0.9;
       } else {
@@ -571,7 +587,6 @@
         isJumping = false;
       }
 
-      // Анимация (ускоряется с ростом скорости)
       const adjustedRunFPS = RUN_FPS * (1 + (worldSpeed - 2.8) / 8);
       if (player.onGround) {
         runTimer += dt;
@@ -584,7 +599,6 @@
         runFrame = 1;
       }
 
-      // Спавн препятствий (АКТИВНО увеличиваем частоту с ростом скорости)
       spawnCooldown -= dt;
       antiSpamMs -= dt;
 
@@ -592,27 +606,22 @@
         if (canSpawnNow()) {
           spawnObstacle();
 
-          // СУЩЕСТВЕННО уменьшаем защитный интервал с ростом скорости
           const speedRatio = worldSpeed / MAX_SPEED;
-          const antiSpamReduction = 600 * speedRatio; // Сильное уменьшение
+          const antiSpamReduction = 600 * speedRatio;
           antiSpamMs = Math.max(250, 800 - antiSpamReduction);
 
           const r = Math.random();
           let base;
           
-          // На высокой скорости - чаще препятствия
           if (speedRatio < 0.3) {
-            // Начальный уровень: нормальные промежутки
             if (r < 0.25) base = rand(700, 1000);
             else if (r < 0.85) base = rand(1100, 1800);
             else base = rand(1900, 3200);
           } else if (speedRatio < 0.6) {
-            // Средний уровень: чаще
             if (r < 0.35) base = rand(500, 800);
             else if (r < 0.90) base = rand(900, 1500);
             else base = rand(1600, 2500);
           } else {
-            // Высокий уровень: очень часто
             if (r < 0.45) base = rand(300, 600);
             else if (r < 0.95) base = rand(700, 1200);
             else base = rand(1300, 2000);
@@ -620,22 +629,19 @@
 
           base += rand(-80, 80);
           
-          // СИЛЬНОЕ уменьшение задержки между спавном
           const spawnReduction = 400 * speedRatio;
           spawnCooldown = Math.max(300, base - spawnReduction);
         } else {
-          spawnCooldown = 80; // Очень маленькая задержка при невозможности спавна
+          spawnCooldown = 80;
         }
       }
 
-      // Движение и столкновения
       for (let i = obstacles.length - 1; i >= 0; i--) {
         const o = obstacles[i];
         o.x -= move;
 
-        // Хитбоксы (чуть более лояльные на высокой скорости для баланса)
         const speedRatio = worldSpeed / MAX_SPEED;
-        const hitboxReduction = Math.min(0.1, speedRatio * 0.08); // Меньшее уменьшение
+        const hitboxReduction = Math.min(0.1, speedRatio * 0.08);
         
         const pHit = {
           x: player.x + Math.round(player.w * (0.32 - hitboxReduction)),
@@ -645,7 +651,7 @@
         };
 
         let oHit;
-        const obstacleReduction = Math.min(8, difficultyLevel * 0.3); // Меньшее увеличение хитбоксов
+        const obstacleReduction = Math.min(8, difficultyLevel * 0.3);
         
         switch(o.type) {
           case 'bab1':
